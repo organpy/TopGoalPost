@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="topgoalpost.svg" alt="TopGoalPost — competitive tournaments on Discord" width="100%">
+<img src="topgoalpostbanner.svg" alt="TopGoalPost — competitive tournaments on Discord" width="100%">
 
-# ⚽ TopGoalPost
+---
 
 ### Discord Bot for Competitive Tournaments
 
