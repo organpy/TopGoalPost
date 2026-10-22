@@ -2,7 +2,7 @@
 
 <img src="topgoalpostbanner.svg" alt="TopGoalPost — tournament bot for the Pro Bobble League Circuit" width="100%">
 
-### A Discord bot for running the Pro Bobble League Circuit (PBLC)
+### A Discord bot for running Pro Bobble League Circuit (PBLC)
 
 Signups, Open, Play-ins, Swiss and a double-elimination playoff bracket, with
 rendered standings images and Discord-thread scheduling.
@@ -14,8 +14,6 @@ rendered standings images and Discord-thread scheduling.
 [Quick start](#quick-start) · [Season lifecycle](#season-lifecycle) · [Commands](#commands) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
 
 </div>
-
----
 
 ## Quick start
 
