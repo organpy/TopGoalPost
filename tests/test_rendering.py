@@ -1,0 +1,452 @@
+"""Rendering layout and label tests."""
+
+import pytest
+from PIL import Image
+
+from bot.db.models import EventType, Season, SeasonStatus
+from bot.rendering.StandingsMaker import (
+    _fit_name,
+    _get_season,
+    _playin_player_label,
+    name_font,
+    name_w,
+    swiss_specs,
+    swiss_texts,
+)
+from bot.rendering.playoff import (
+    PLAYOFF_BOX_H,
+    PLAYOFF_BOX_W,
+    PLAYOFF_LAYOUT_H,
+    PLAYOFF_LAYOUT_W,
+    PLAYOFF_NAME_W,
+    PLAYOFF_PLAYER_W,
+    PLAYOFF_ROW_H,
+    PLAYOFF_SCORE_W,
+    PLAYOFF_SLOT_POS,
+    _card_rect,
+    _connector_points,
+    _playoff_champion,
+)
+from bot.services.pairing import ADVANCEMENT_REVERSE_MAP, PLAYOFF_BRACKET
+
+
+def _card_center(slot: str) -> float:
+    return PLAYOFF_SLOT_POS[slot][1] + PLAYOFF_BOX_H / 2
+
+
+def _row_center(slot: str, side: int | None) -> float:
+    top = PLAYOFF_SLOT_POS[slot][1]
+    if side is None:
+        return top + PLAYOFF_BOX_H / 2
+    return top + side * PLAYOFF_ROW_H + PLAYOFF_ROW_H / 2
+
+
+def _segment_hits_card_interior(a, b, rect) -> bool:
+    x1, y1 = a
+    x2, y2 = b
+    left, top, right, bottom = rect
+    if y1 == y2 and top < y1 < bottom:
+        return max(min(x1, x2), left) < min(max(x1, x2), right)
+    if x1 == x2 and left < x1 < right:
+        return max(min(y1, y2), top) < min(max(y1, y2), bottom)
+    return False
+
+
+def test_playoff_layout_covers_every_slot():
+    expected = {row[0] for row in PLAYOFF_BRACKET} | {"GF-M2"}
+    assert set(PLAYOFF_SLOT_POS) == expected
+
+    positions = list(PLAYOFF_SLOT_POS.values())
+    assert len(positions) == len(set(positions))
+
+
+def test_playoff_advancement_references_known_slots():
+    for target, sources in ADVANCEMENT_REVERSE_MAP.items():
+        assert target in PLAYOFF_SLOT_POS
+        for source, _outcome, _side in sources:
+            assert source in PLAYOFF_SLOT_POS
+
+
+def test_playoff_cards_are_wide_and_scores_are_fixed_width():
+    assert PLAYOFF_NAME_W >= 240
+    assert PLAYOFF_BOX_W == PLAYOFF_PLAYER_W + PLAYOFF_SCORE_W * 3
+    assert PLAYOFF_LAYOUT_W > 4000
+
+
+def test_playoff_cards_do_not_overlap():
+    rects = {slot: _card_rect(slot) for slot in PLAYOFF_SLOT_POS}
+
+    for slot, (left, top, right, bottom) in rects.items():
+        for other, (o_left, o_top, o_right, o_bottom) in rects.items():
+            if slot == other:
+                continue
+            assert right <= o_left or o_right <= left or bottom <= o_top or o_bottom <= top
+
+
+def test_playoff_parents_are_centered_on_feeders():
+    assert _card_center("W-R2-M1") == pytest.approx(
+        (_card_center("W-R1-M1") + _card_center("W-R1-M2")) / 2,
+        abs=0.6,
+    )
+    assert _card_center("W-R3-M1") == pytest.approx(
+        (_card_center("W-R2-M1") + _card_center("W-R2-M2")) / 2,
+        abs=0.6,
+    )
+    assert _card_center("W-R4-M1") == pytest.approx(
+        (_card_center("W-R3-M1") + _card_center("W-R3-M2")) / 2,
+        abs=0.6,
+    )
+    assert _card_center("L-R3-M1") == pytest.approx(
+        (_card_center("L-R2-M1") + _card_center("L-R2-M2")) / 2,
+        abs=0.6,
+    )
+    assert _card_center("L-R5-M1") == pytest.approx(
+        (_card_center("L-R4-M1") + _card_center("L-R4-M2")) / 2,
+        abs=0.6,
+    )
+    assert _card_center("GF-M1") == pytest.approx(
+        (_card_center("W-R4-M1") + _card_center("L-R6-M1")) / 2,
+        abs=0.6,
+    )
+
+
+def test_playoff_connectors_do_not_cross_cards():
+    rects = {slot: _card_rect(slot) for slot in PLAYOFF_SLOT_POS}
+    edges = [
+        (src, outcome, side, tgt)
+        for tgt, sources in ADVANCEMENT_REVERSE_MAP.items()
+        if tgt in PLAYOFF_SLOT_POS
+        for src, outcome, side in sources
+        if src in PLAYOFF_SLOT_POS
+    ]
+    edges.append(("GF-M1", "winner", None, "GF-M2"))
+
+    for src, _outcome, side, tgt in edges:
+        tgt_y = _row_center(tgt, side)
+        for src_side in (None, 0, 1):
+            src_y = _row_center(src, src_side)
+            points = _connector_points(src, src_y, tgt, tgt_y)
+            for point in points:
+                assert 0 <= point[0] <= PLAYOFF_LAYOUT_W
+                assert 0 <= point[1] <= PLAYOFF_LAYOUT_H
+            for a, b in zip(points, points[1:]):
+                for slot, rect in rects.items():
+                    assert not _segment_hits_card_interior(a, b, rect), (
+                        f"{src}->{tgt} crosses {slot}"
+                    )
+
+
+def test_playin_label_has_no_hp():
+    assert _playin_player_label("Player") == "Player"
+    assert "HP" not in _playin_player_label("Player")
+    assert _playin_player_label("") == "TBA"
+
+
+def test_swiss_survival_board_matches_round_counts():
+    assert len(swiss_specs) == len(swiss_texts) == 5
+    assert [sum(specs) for specs in swiss_specs] == [16, 16, 16, 12, 6]
+    assert sum(sum(specs) for specs in swiss_specs) == 66
+    for specs, titles in zip(swiss_specs, swiss_texts):
+        assert len(specs) == len(titles)
+
+
+def test_fit_name_clips_to_the_name_column():
+    long_name = "A very long player name that cannot possibly fit"
+    clipped = _fit_name(long_name)
+    assert clipped.endswith("...")
+    assert name_font.getlength(clipped) <= name_w - 4
+
+    assert _fit_name("Short") == "Short"
+    assert _fit_name("") == ""
+
+
+async def test_get_season_does_not_default_to_one(db):
+    async with db.get_session() as session:
+        with pytest.raises(ValueError, match="No active season"):
+            await _get_season(session)
+
+
+async def test_swiss_renders_fixed_five_round_board(db, tmp_path, monkeypatch):
+    from bot.rendering import StandingsMaker as standings
+
+    target = tmp_path / "swiss.png"
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        await session.commit()
+
+    monkeypatch.setattr(standings, "asset_path", lambda *parts: str(target))
+
+    _, filename, *_ = await standings.get_swiss()
+
+    assert filename == str(target)
+    assert target.stat().st_size > 0
+    with Image.open(target) as img:
+        # Five columns on the survival ladder.
+        assert img.size[0] > 5 * 300
+
+
+async def test_swiss_renders_incremental_one_sided_slot(db, tmp_path, monkeypatch):
+    from datetime import datetime
+    from bot.db import Event, EventType, Match, MatchPlayer, Player
+    from bot.rendering import StandingsMaker as standings
+    from bot.rendering import asset_path as real_asset_path
+
+    target = tmp_path / "swiss.png"
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        await session.flush()
+        p1 = Player(discord_id=101, name="Alice", country="us")
+        p2 = Player(discord_id=102, name="Bob", country="fr")
+        session.add_all([p1, p2])
+        await session.flush()
+        event = Event(name="Swiss", type=EventType.SWISS, season=1)
+        session.add(event)
+        await session.flush()
+        r1 = Match(
+            event_id=event.id,
+            series_game=1,
+            bracket_slot="SW-R1-M1",
+            completed_at=datetime.utcnow(),
+        )
+        r2 = Match(
+            event_id=event.id,
+            series_game=2,
+            bracket_slot="SW-R2-M1",
+        )
+        session.add_all([r1, r2])
+        await session.flush()
+        session.add_all(
+            [
+                MatchPlayer(
+                    match_id=r1.id,
+                    side=0,
+                    player_id=p1.id,
+                    goals=1,
+                    is_winner=True,
+                ),
+                MatchPlayer(
+                    match_id=r1.id,
+                    side=1,
+                    player_id=p2.id,
+                    goals=0,
+                    is_winner=False,
+                ),
+                MatchPlayer(match_id=r2.id, side=0, player_id=p1.id),
+                MatchPlayer(match_id=r2.id, side=1, player_id=None),
+            ]
+        )
+        await session.commit()
+
+    monkeypatch.setattr(
+        standings,
+        "asset_path",
+        lambda *parts: (
+            str(target)
+            if parts == ("tables", "swiss.png")
+            else real_asset_path(*parts)
+        ),
+    )
+
+    _, filename, *_ = await standings.get_swiss()
+
+    assert filename == str(target)
+    assert target.stat().st_size > 0
+
+
+async def test_playoff_renders_empty_bracket(db, tmp_path, monkeypatch):
+    from bot.rendering import playoff as playoff_module
+
+    target = tmp_path / "playoff.png"
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        await session.commit()
+
+    monkeypatch.setattr(playoff_module, "asset_path", lambda *parts: str(target))
+
+    _, filename, *_ = await playoff_module.get_playoff()
+
+    assert filename == str(target)
+    assert target.stat().st_size > 0
+    with Image.open(target) as img:
+        assert img.size == (PLAYOFF_LAYOUT_W, PLAYOFF_LAYOUT_H)
+
+
+def test_swiss_bucket_parses_slot_names():
+    from bot.rendering.StandingsMaker import _swiss_bucket
+
+    assert _swiss_bucket("SW-R1-M4") == "M"
+    assert _swiss_bucket("SW-R2-U1") == "U"
+    assert _swiss_bucket("SW-R2-L8") == "L"
+    assert _swiss_bucket("SW-R3-M12") == "M"
+    assert _swiss_bucket("SW-R5-M6") == "M"
+    assert _swiss_bucket(None) == "M"
+
+
+def test_swiss_feeder_labels_use_match_ids():
+    from bot.rendering.StandingsMaker import _feeder_label, _prereq_code
+
+    assert _prereq_code("SW", 266, "winner") == "SW266W"
+    assert _prereq_code("SW", 266, "loser") == "SW266L"
+    assert _feeder_label("SW266W") == "Winner of 266"
+    assert _feeder_label("SW266L") == "Loser of 266"
+
+
+def test_playoff_feeder_label_uses_real_player_names():
+    from bot.rendering.playoff import _feeder_label
+
+    row = [1, 2, 5, 0, 1, "Organ", "Dummy", "US", "US", "PO266", None, None, "W-R1-M1", 1]
+    row_by_id = {266: row}
+    assert _feeder_label("PO266W", row_by_id) == "Winner of Organ vs Dummy"
+    assert _feeder_label("PO266L", row_by_id) == "Loser of Organ vs Dummy"
+    assert _feeder_label("PO999W", row_by_id) == "TBA"
+    assert _feeder_label(None, row_by_id) == "TBA"
+
+
+def test_swiss_specs_match_fixed_bracket_buckets():
+    from bot.services.pairing import SWISS_BRACKET
+
+    counts = {}
+    for slot, _round, *_rest in SWISS_BRACKET:
+        rnd = int(slot.split("-R")[1].split("-")[0])
+        bucket = slot.split("-")[2][0]
+        counts.setdefault(rnd, {}).setdefault(bucket, 0)
+        counts[rnd][bucket] += 1
+
+    expected = {
+        1: {"M": 16},
+        2: {"U": 8, "L": 8},
+        3: {"U": 4, "M": 8, "L": 4},
+        4: {"U": 6, "L": 6},
+        5: {"M": 6},
+    }
+    assert counts == expected
+
+    # The rendered column sizes line up with the bucket order used for display.
+    from bot.rendering.StandingsMaker import swiss_letters
+
+    for rnd in range(1, 6):
+        assert set(swiss_letters[rnd - 1]) == set(expected[rnd])
+        for letter, size in zip(swiss_letters[rnd - 1], swiss_specs[rnd - 1]):
+            assert expected[rnd][letter] == size
+
+
+async def test_playoff_winners_view_includes_grand_final(db, tmp_path, monkeypatch):
+    from bot.rendering import playoff as playoff_module
+
+    target = tmp_path / "playoff_winners.png"
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        await session.commit()
+
+    monkeypatch.setattr(playoff_module, "asset_path", lambda *parts: str(target))
+
+    _, filename, *_ = await playoff_module.get_playoff(view="winners")
+
+    assert filename == str(target)
+    with Image.open(target) as img:
+        assert img.width > 0 and img.height > 0
+        # The cropped winners view is narrower than the full bracket.
+        assert img.width < playoff_module.PLAYOFF_LAYOUT_W
+
+    assert "GF-M1" in playoff_module.PLAYOFF_SLOT_POS
+    assert "GF-M2" in playoff_module.PLAYOFF_SLOT_POS
+
+def _po_row(p1, p2, score1, score2, winner, slot, game=1):
+    return [
+        p1, p2, score1, score2, winner,
+        f"P{p1}", f"P{p2}", "US", "US",
+        "PO1", None, None, slot, game,
+    ]
+
+def test_playoff_champion_needs_a_decided_series():
+    assert _playoff_champion({}) == (None, None)
+    # 1-0 in the grand final: still playing.
+    assert _playoff_champion(
+        {"GF-M1": [_po_row(1, 2, 5, 0, 1, "GF-M1")]}
+    ) == (None, None)
+
+def test_playoff_champion_from_grand_final():
+    rows = [
+        _po_row(1, 2, 5, 0, 1, "GF-M1", 1),
+        _po_row(1, 2, 3, 2, 1, "GF-M1", 2),
+    ]
+    assert _playoff_champion({"GF-M1": rows}) == (1, "GF-M1")
+
+    rows = [
+        _po_row(1, 2, 5, 0, 1, "GF-M1", 1),
+        _po_row(1, 2, 2, 3, 2, "GF-M1", 2),
+        _po_row(1, 2, 1, 3, 2, "GF-M1", 3),
+    ]
+    assert _playoff_champion({"GF-M1": rows}) == (2, "GF-M1")
+
+def test_playoff_champion_ignores_reset_winner_of_grand_final():
+    # The losers-bracket champ won GF-M1, so the reset decides the title.
+    gf1 = [
+        _po_row(1, 2, 5, 0, 1, "GF-M1", 1),
+        _po_row(1, 2, 2, 3, 2, "GF-M1", 2),
+        _po_row(1, 2, 1, 3, 2, "GF-M1", 3),
+    ]
+    gf2 = [_po_row(1, 2, 4, 3, 1, "GF-M2", 1)]
+    assert _playoff_champion({"GF-M1": gf1, "GF-M2": gf2}) == (None, None)
+
+    gf2.append(_po_row(1, 2, 3, 1, 1, "GF-M2", 2))
+    assert _playoff_champion({"GF-M1": gf1, "GF-M2": gf2}) == (1, "GF-M2")
+
+def _count_champion_pixels(img, slot):
+    from bot.rendering.playoff import PLAYOFF_CHAMPION_COLOR
+
+    left, top, right, bottom = _card_rect(slot)
+    card = img.convert("RGB").crop(
+        (int(left), int(top), int(right), int(bottom))
+    )
+    colors = card.getcolors(maxcolors=1 << 20) or []
+    return sum(count for count, color in colors if color == PLAYOFF_CHAMPION_COLOR)
+
+async def test_playoff_champion_card_is_highlighted(db, tmp_path, monkeypatch):
+    from bot.db.models import Match, MatchPlayer
+    from bot.db.repositories import EventRepository, PlayerRepository
+    from bot.rendering import playoff as playoff_module
+
+    target = tmp_path / "playoff.png"
+    monkeypatch.setattr(playoff_module, "asset_path", lambda *parts: str(target))
+
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        await session.commit()
+        event = await EventRepository(session).create(
+            "test", EventType.PLAYOFF, 1
+        )
+        champ = await PlayerRepository(session).create(
+            discord_id=111, name="Champ"
+        )
+        runner = await PlayerRepository(session).create(
+            discord_id=222, name="Runner"
+        )
+        for game, (s1, s2, winner) in enumerate(
+            ((5, 0, champ), (3, 2, champ)), start=1
+        ):
+            match = Match(
+                event_id=event.id, bracket_slot="GF-M1", series_game=game
+            )
+            session.add(match)
+            await session.flush()
+            session.add_all([
+                MatchPlayer(
+                    match_id=match.id, side=0, player_id=champ.id,
+                    goals=s1, is_winner=winner is champ,
+                ),
+                MatchPlayer(
+                    match_id=match.id, side=1, player_id=runner.id,
+                    goals=s2, is_winner=winner is runner,
+                ),
+            ])
+        await session.commit()
+
+    _, filename, *_ = await playoff_module.get_playoff()
+
+    assert filename == str(target)
+    with Image.open(target) as img:
+        # Gold border + gold name on the deciding card.
+        assert _count_champion_pixels(img, "GF-M1") > 100
+        # The reset card does not exist yet, so it stays plain.
+        assert _count_champion_pixels(img, "GF-M2") == 0

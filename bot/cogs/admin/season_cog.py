@@ -1,0 +1,189 @@
+"""Admin cog for season management."""
+
+import os
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+
+import discord
+from discord.ext import commands
+from discord import app_commands
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from bot.cogs.checks import require_host
+from bot.services.season import SeasonService
+from bot.db import get_db_manager, PlayerSeason
+from bot.config import Config
+
+
+class SeasonAdminCog(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.db = get_db_manager()
+        self.season_service = SeasonService()
+
+    @commands.group(name="season", invoke_without_command=True)
+    @require_host()
+    async def season_group(self, ctx: commands.Context):
+        """Season management commands."""
+        await ctx.send_help(ctx.command)
+
+    @season_group.command(name="status", help="Check current season status")
+    @require_host()
+    async def status_cmd(self, ctx: commands.Context):
+        season_num = await self.season_service.get_current_season_number()
+        state = await self.season_service.get_state()
+
+        embed = discord.Embed(title="Season Status", color=discord.Color.blue())
+        if season_num:
+            embed.add_field(name="Current Season", value=f"Season {season_num}", inline=False)
+            embed.add_field(name="State", value=state, inline=False)
+        else:
+            embed.description = "No active season exists."
+
+        await ctx.send(embed=embed)
+
+    @season_group.command(name="create", help="Create a new season (archives the current one and wipes its data)")
+    @require_host()
+    async def create_cmd(self, ctx: commands.Context, number: int):
+        success = await self.season_service.create_season(number)
+        if success:
+            await ctx.send(f"Successfully created Season {number} and set state to OFFSEASON.")
+        else:
+            await ctx.send(f"Season {number} is already active.")
+
+    @season_group.command(name="advance", help="Advance the season state (SIGNUP, OPEN, PLAYIN, SWISS, PLAYOFF, OFFSEASON)")
+    @require_host()
+    async def advance_cmd(self, ctx: commands.Context, state: str):
+        valid_states = ["SIGNUP", "OPEN", "PLAYIN", "SWISS", "PLAYOFF", "OFFSEASON"]
+        if state.upper() not in valid_states:
+            await ctx.send(f"Invalid state. Must be one of: {', '.join(valid_states)}")
+            return
+
+        success = await self.season_service.advance_state(state.upper())
+        if success:
+            msg = f"Season state advanced to: **{state.upper()}**"
+            if state.upper() == "PLAYIN":
+                msg += (
+                    "\n⚠️ This does **not** create playin matches. "
+                    "Run `/tourney start_playins` or dashboard **Start Playins** after Open is scored."
+                )
+            elif state.upper() == "OPEN":
+                msg += "\nGenerate matches with `/tourney generate_open` if you have not already."
+            await ctx.send(msg)
+        else:
+            await ctx.send("Failed to advance state.")
+
+    @commands.command(name="playerlist", help="View all registered players")
+    @require_host()
+    async def playerlist_cmd(self, ctx: commands.Context):
+        season_num = await self.season_service.get_current_season_number()
+        if not season_num:
+            await ctx.send("No active season.")
+            return
+
+        async with self.db.get_session() as session:
+            stmt = select(PlayerSeason).options(selectinload(PlayerSeason.player)).where(PlayerSeason.season_number == season_num)
+            result = await session.execute(stmt)
+            players = result.scalars().all()
+
+        if not players:
+            await ctx.send("No players registered.")
+            return
+
+        lines = []
+        for ps in sorted(players, key=lambda x: (x.swiss_seed is None, x.swiss_seed, x.player.name)):
+            seed_str = f"[Seed {ps.swiss_seed}] " if ps.swiss_seed else ""
+            lines.append(f"• {seed_str}**{ps.player.name}** (HP: {ps.hp}, Open: {ps.open_wins}-{ps.open_losses})")
+
+        # Quick pagination/chunking
+        chunks = []
+        chunk = ""
+        for line in lines:
+            if len(chunk) + len(line) > 1900:
+                chunks.append(chunk)
+                chunk = line + "\n"
+            else:
+                chunk += line + "\n"
+        if chunk:
+            chunks.append(chunk)
+
+        await ctx.send(f"**Registered Players ({len(players)}) - Page 1/{len(chunks)}**\n{chunks[0]}")
+        for c in chunks[1:]:
+            await ctx.send(c)
+
+    CONFIG_KEYS = {
+        "match_channel": "Channel for match scheduling threads",
+        "score_channel": "Channel for score confirmation messages",
+        "agreements_channel": "Channel where agreed match times are announced",
+        "admin_id": "Discord ID of the head admin (contact for errors)",
+        "admin_roles": "Comma-separated role IDs allowed to use admin/host commands",
+        "signup_role": "Role given to signed-up players (never removed by giveroles)",
+        "moderator_role": "Role that can confirm/reject scores",
+        "open_role": "Role for Open stage participants",
+        "playin_role": "Role for Playin stage participants",
+        "swiss_role": "Role for Swiss stage participants",
+        "playoff_role": "Role for Playoff stage participants",
+    }
+
+    @commands.command(name="set_config", help="Set a bot configuration value")
+    @require_host()
+    async def set_config_cmd(self, ctx: commands.Context, key: str, *, value: str):
+        if key not in self.CONFIG_KEYS:
+            await ctx.send(f"Unknown config key. Valid keys: {', '.join(self.CONFIG_KEYS.keys())}")
+            return
+
+        cfg = Config()
+        if key == "match_channel":
+            # Validate it's a channel ID
+            try:
+                cid = int(value)
+                ch = ctx.guild.get_channel(cid)
+                if not ch:
+                    await ctx.send("Invalid channel ID.")
+                    return
+            except ValueError:
+                await ctx.send("Channel ID must be a number.")
+                return
+        await cfg.set(key, value)
+        await ctx.send(f"Set `{key}` to `{value}`.")
+
+    @commands.command(name="remove_config", help="Remove a bot configuration value")
+    @require_host()
+    async def remove_config_cmd(self, ctx: commands.Context, key: str):
+        cfg = Config()
+        removed = await cfg.remove(key)
+        if removed:
+            await ctx.send(f"Removed `{key}`.")
+        else:
+            await ctx.send(f"`{key}` was not set.")
+
+    @commands.command(name="backup", help="Backup the database")
+    @require_host()
+    async def backup_cmd(self, ctx: commands.Context):
+        from bot.db import PROJECT_ROOT, resolve_database_url
+
+        backup_dir = PROJECT_ROOT / "data" / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        db_url = resolve_database_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:///data/bot.db"))
+        sqlite_prefix = "sqlite+aiosqlite:///"
+        if not db_url.startswith(sqlite_prefix):
+            await ctx.send("Backup is only supported for sqlite databases.")
+            return
+        db_path = Path(db_url[len(sqlite_prefix):])
+        if not db_path.exists():
+            await ctx.send(f"No database file found at `{db_path}`.")
+            return
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        backup_path = backup_dir / f"{db_path.stem}_{timestamp}.db"
+        try:
+            shutil.copy2(str(db_path), str(backup_path))
+            size_mb = backup_path.stat().st_size / (1024 * 1024)
+            await ctx.send(f"Backup created: `{backup_path}` ({size_mb:.1f} MB)")
+        except Exception as e:
+            await ctx.send(f"Backup failed: {e}")
+
+
+async def setup(bot):
+    await bot.add_cog(SeasonAdminCog(bot))

@@ -1,0 +1,15 @@
+.env
+.venv/
+venv/
+
+# Databases and backups are local state
+*.db
+*.db-journal
+data/backups/*
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Rendered standings images are regenerated on demand
+assets/tables/*.png
