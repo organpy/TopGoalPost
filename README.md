@@ -1,110 +1,27 @@
 <div align="center">
 
-<img src="topgoalpostbanner.svg" alt="TopGoalPost — competitive tournaments on Discord" width="100%">
+<img src="topgoalpostbanner.svg" alt="TopGoalPost — tournament bot for the Pro Bobble League Circuit" width="100%">
 
----
+### A Discord bot for running the Pro Bobble League Circuit (PBLC)
 
-### Discord Bot for Competitive Tournaments
-
-*A powerful and flexible Discord bot to run tournaments, handle player registrations, track matches, show live stats, and keep your community organized — all in one place.*
+Signups, Open, Play-ins, Swiss and a double-elimination playoff bracket, with
+rendered standings images and Discord-thread scheduling.
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![discord.py](https://img.shields.io/badge/Discord-discord.py-5865F2?style=for-the-badge&logo=discord&logoColor=white)
 ![Database](https://img.shields.io/badge/Database-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
-![Status](https://img.shields.io/badge/Focus-Tournament%20Management-ff4f91?style=for-the-badge)
 
-**Organize · Compete · Have Fun**
-
-[Features](#-features) · [Quick Start](#-quick-start) · [Season Lifecycle](#-season-lifecycle) · [Commands](#-commands) · [Configuration](#-configuration) · [Support](#-need-help)
+[Quick start](#quick-start) · [Season lifecycle](#season-lifecycle) · [Commands](#commands) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
 
 </div>
 
 ---
 
-## ✨ Features
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 🏆 Tournament Management
-
-- Season and stage management
-- Open-stage match generation
-- Play-in qualification ladder
-- 32-player Swiss survival stage
-- 16-player playoff field
-- 29-slot double-elimination bracket with reset
-- Best-of-three playoff series
-
-</td>
-<td width="33%" valign="top">
-
-### 🧑 Player Registration
-
-- Sign up directly through Discord
-- Choose a username and country
-- Update your display name
-- Check registration status
-- Withdraw before the Open stage
-- Returning-player seed management
-
-</td>
-<td width="33%" valign="top">
-
-### 📊 Live Stats & Standings
-
-- Generated standings images
-- Open-stage leaderboard
-- Player profiles and match history
-- Visual Play-in and Swiss boards
-- Playoff bracket views
-- Player avatars and country flags
-
-</td>
-</tr>
-<tr>
-<td width="33%" valign="top">
-
-### 🗓️ Match Scheduling
-
-- Timezone-aware scheduling
-- Availability and timeslots
-- Match-time proposals
-- Dedicated scheduling threads
-- Score reporting and corrections
-
-</td>
-<td width="33%" valign="top">
-
-### 🤖 Discord Integration
-
-- Slash commands for players
-- Interactive buttons and modals
-- Persistent signup button
-- Tournament dashboard
-- Automated stage progression
-
-</td>
-<td width="33%" valign="top">
-
-### ⚙️ Host Tools
-
-- Admin and moderator permissions
-- Configurable roles and channels
-- Season and match administration
-- Database backups
-- Testing utilities and dummy data
-
-</td>
-</tr>
-</table>
-
----
-
-## 🚀 Quick start
+## Quick start
 
 ```bash
+git clone https://github.com/organpy/srtrt.git
+cd srtrt
 cp .env.example .env             # edit DISCORD_TOKEN, SERVER_ID
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -126,7 +43,7 @@ startup and clears global duplicates.
 
 ---
 
-## 🔄 Season lifecycle
+## Season lifecycle
 
 ```
 OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → (season ends)
@@ -353,7 +270,7 @@ the reset card if one is played.
 
 ---
 
-## 💬 Commands
+## Commands
 
 ### `!season` (admin — prefix)
 
@@ -495,7 +412,7 @@ Grant host roles:
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 All config lives in the `settings` DB table (flat key–value). Set via
 `!set_config key value` and remove via `!remove_config key`.
@@ -516,7 +433,7 @@ All config lives in the `settings` DB table (flat key–value). Set via
 
 ---
 
-## 🗂️ Season isolation
+## Season isolation
 
 Each season owns its data exclusively. `!season create N`:
 
@@ -534,7 +451,7 @@ re-downloaded on signup, login, or `!getpfps`.
 
 ---
 
-## 🖥️ Dashboard
+## Dashboard
 
 `/dashboard` opens an interactive admin panel with buttons for each stage
 action. The **Next Step** button follows the season state machine and the
@@ -542,7 +459,7 @@ action. The **Next Step** button follows the season state machine and the
 
 ---
 
-## 📁 Assets
+## Assets
 
 The `assets/` directory holds:
 
@@ -564,7 +481,7 @@ CDN on first use and falls back to a transparent box if the fetch fails.
 
 ---
 
-## 🧪 Testing & dummy data
+## Testing & dummy data
 
 ```bash
 # full suite (in-memory SQLite)
@@ -588,7 +505,7 @@ python scripts/seed_dummy_players.py
 
 Then point `DATABASE_URL` in `.env` to `sqlite+aiosqlite:///data/my_season.db`.
 
-## 🗄️ DB migrations
+## DB migrations
 
 ```bash
 alembic -c alembic.ini upgrade head
@@ -599,7 +516,7 @@ Migrations live in `migrations/versions/`.
 
 ---
 
-## 🧯 Troubleshooting
+## Troubleshooting
 
 **Bot doesn't start**
 - Check `DISCORD_TOKEN` and `SERVER_ID` in `.env`
@@ -628,7 +545,7 @@ Migrations live in `migrations/versions/`.
 
 ---
 
-## 🛟 Need help?
+## Need help?
 
 - **Bugs and feature requests:** open an issue on this repository's tracker, or
   ping the bot's host in your Discord server.
@@ -636,13 +553,3 @@ Migrations live in `migrations/versions/`.
   relevant lines from the bot's stdout log.
 - **Never share secrets:** don't paste your bot token, `.env` contents, or
   database files into an issue. Revoke and regenerate the token if it leaks.
-
----
-
-<div align="center">
-
-### 🎯 Organize. Compete. Have fun.
-
-**TopGoalPost** · Built for competitive communities.
-
-</div>
