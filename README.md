@@ -1,12 +1,108 @@
-# TopGoalPost — Bot Guide
+<div align="center">
 
-A `discord.py` tournament bot for running a football-style league season:
-Open → Playin → Swiss → double-elimination Playoffs, with rendered standings
-images and Discord-thread scheduling.
+<img src="topgoalpost.svg" alt="TopGoalPost — competitive tournaments on Discord" width="100%">
+
+# ⚽ TopGoalPost
+
+### Discord Bot for Competitive Tournaments
+
+*A powerful and flexible Discord bot to run tournaments, handle player registrations, track matches, show live stats, and keep your community organized — all in one place.*
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![discord.py](https://img.shields.io/badge/Discord-discord.py-5865F2?style=for-the-badge&logo=discord&logoColor=white)
+![Database](https://img.shields.io/badge/Database-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+![Status](https://img.shields.io/badge/Focus-Tournament%20Management-ff4f91?style=for-the-badge)
+
+**Organize · Compete · Have Fun**
+
+[Features](#-features) · [Quick Start](#-quick-start) · [Season Lifecycle](#-season-lifecycle) · [Commands](#-commands) · [Configuration](#-configuration) · [Support](#-need-help)
+
+</div>
 
 ---
 
-## Quick start
+## ✨ Features
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🏆 Tournament Management
+
+- Season and stage management
+- Open-stage match generation
+- Play-in qualification ladder
+- 32-player Swiss survival stage
+- 16-player playoff field
+- 29-slot double-elimination bracket with reset
+- Best-of-three playoff series
+
+</td>
+<td width="33%" valign="top">
+
+### 🧑 Player Registration
+
+- Sign up directly through Discord
+- Choose a username and country
+- Update your display name
+- Check registration status
+- Withdraw before the Open stage
+- Returning-player seed management
+
+</td>
+<td width="33%" valign="top">
+
+### 📊 Live Stats & Standings
+
+- Generated standings images
+- Open-stage leaderboard
+- Player profiles and match history
+- Visual Play-in and Swiss boards
+- Playoff bracket views
+- Player avatars and country flags
+
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+
+### 🗓️ Match Scheduling
+
+- Timezone-aware scheduling
+- Availability and timeslots
+- Match-time proposals
+- Dedicated scheduling threads
+- Score reporting and corrections
+
+</td>
+<td width="33%" valign="top">
+
+### 🤖 Discord Integration
+
+- Slash commands for players
+- Interactive buttons and modals
+- Persistent signup button
+- Tournament dashboard
+- Automated stage progression
+
+</td>
+<td width="33%" valign="top">
+
+### ⚙️ Host Tools
+
+- Admin and moderator permissions
+- Configurable roles and channels
+- Season and match administration
+- Database backups
+- Testing utilities and dummy data
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🚀 Quick start
 
 ```bash
 cp .env.example .env             # edit DISCORD_TOKEN, SERVER_ID
@@ -30,7 +126,7 @@ startup and clears global duplicates.
 
 ---
 
-## Season lifecycle
+## 🔄 Season lifecycle
 
 ```
 OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → (season ends)
@@ -170,9 +266,9 @@ Open wins decide where each unseeded player enters:
 | 1 | Enters R1 |
 | 0 | Eliminated |
 
-Returning seeds (`swiss_seed > 0`, set by `skip_open` or `import_seeds`) skip
-Playins entirely. Playin always targets `32 - returning_seeds` qualifiers, so
-the Swiss field is exactly 32.
+Returning seeds (`swiss_seed > 0`, set by `/tourney skip_open` or
+`!tourney import_seeds`) skip Playins entirely. Playin always targets
+`32 - returning_seeds` qualifiers, so the Swiss field is exactly 32.
 
 ```
 /tourney start_playins     # creates the complete R1/R2/R3 graph
@@ -228,8 +324,8 @@ pairing, so the same two players can meet twice.
 
 The final playoff field is 16 players: 4 at 3-0, 6 at 3-1, and 6 at 3-2.
 
-Before Swiss, `skip_open` (or `import_seeds`) sets the returning
-seeds.
+Before Swiss, `/tourney skip_open` (or `!tourney import_seeds`) sets the
+returning seeds.
 
 ### 6. Playoffs
 
@@ -257,7 +353,7 @@ the reset card if one is played.
 
 ---
 
-## Command reference
+## 💬 Commands
 
 ### `!season` (admin — prefix)
 
@@ -267,7 +363,7 @@ the reset card if one is played.
 | `!season create N` | Create Season N (archives current + wipes old-season data) |
 | `!season advance OFFSEASON\|SIGNUP\|OPEN\|PLAYIN\|SWISS\|PLAYOFF` | Advance state machine |
 
-### `/tourney` (admin)
+### `/tourney` (admin — slash)
 
 | Command | Description |
 |---------|-------------|
@@ -276,12 +372,26 @@ the reset card if one is played.
 | `/tourney generate_open` | Create 4 open matches per player |
 | `/tourney sync_open` | Rebuild open win/loss from scores |
 | `/tourney start_playins` | Create the complete preseeded Playin ladder |
+| `/tourney playin_round round_num:N` | Re-run a specific Playin round |
 | `/tourney finish_playins` | Manually retry Playin finalization |
-| `/tourney swiss_round [round]` | Create the Swiss ladder / show a round |
+| `/tourney swiss_round round_num:N` | Create the Swiss ladder / show a round |
 | `/tourney generate_playoffs` | Seed playoff bracket from Swiss results |
-| `/tourney import_seeds @1 @2 ...` | Bulk seed import |
-| `/tourney makethreads stage` | Create scheduling threads |
-| `/tourney cleansethreads` | Remove non-participants from threads |
+
+### `!tourney` (admin — prefix)
+
+The same progression engine is also exposed as prefix subcommands:
+
+| Command | Description |
+|---------|-------------|
+| `!tourney makethreads [stage]` | Create scheduling threads for a stage |
+| `!tourney cleansethreads` | Remove non-participants from threads |
+| `!tourney generate_open` | Create 4 open matches per player |
+| `!tourney skip_open A, B` | Set Open-skip / returning seeds |
+| `!tourney generate_playin N` | Run Playin round 1, 2 or 3 |
+| `!tourney finish_playins` | Finalize Playin qualifiers |
+| `!tourney generate_swiss [N]` | Generate the next (or a specific) Swiss round |
+| `!tourney generate_playoffs` | Generate the playoff bracket |
+| `!tourney import_seeds @1 @2 ...` | Bulk seed import (1–16, by mention order) |
 
 ### Player administration
 
@@ -316,10 +426,11 @@ Destructive subcommands ask for a Confirm click first. `/player info` reports
 | `/editname name:X` | Change display name (signups only) |
 | `/report` | Pick match, then preset or custom score |
 | `/forfeit match_id:X` | Concede a match |
+| `/list_matches [stage] [status] [round_num] [player] [page]` | Browse matches with filters |
 | `/open`, `/playins`, `/swiss` | Standings images |
 | `/playoff view:full\|winners\|losers` | Full bracket or one branch |
-| `/profile player:User` | Player stats (says "Skipped Open" for seeded returners) |
-| `/history player:User` | Recent match results |
+| `/profile username:User` | Player stats (says "Skipped Open" for seeded returners) |
+| `/history username:User` | Recent match results |
 
 All of these reply ephemerally, including the standings images.
 
@@ -384,7 +495,7 @@ Grant host roles:
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
 All config lives in the `settings` DB table (flat key–value). Set via
 `!set_config key value` and remove via `!remove_config key`.
@@ -405,7 +516,7 @@ All config lives in the `settings` DB table (flat key–value). Set via
 
 ---
 
-## Season isolation
+## 🗂️ Season isolation
 
 Each season owns its data exclusively. `!season create N`:
 
@@ -423,7 +534,7 @@ re-downloaded on signup, login, or `!getpfps`.
 
 ---
 
-## Dashboard
+## 🖥️ Dashboard
 
 `/dashboard` opens an interactive admin panel with buttons for each stage
 action. The **Next Step** button follows the season state machine and the
@@ -431,7 +542,7 @@ action. The **Next Step** button follows the season state machine and the
 
 ---
 
-## Assets
+## 📁 Assets
 
 The `assets/` directory holds:
 
@@ -453,7 +564,7 @@ CDN on first use and falls back to a transparent box if the fetch fails.
 
 ---
 
-## Testing & dummy data
+## 🧪 Testing & dummy data
 
 ```bash
 # full suite (in-memory SQLite)
@@ -477,7 +588,7 @@ python scripts/seed_dummy_players.py
 
 Then point `DATABASE_URL` in `.env` to `sqlite+aiosqlite:///data/my_season.db`.
 
-## DB migrations
+## 🗄️ DB migrations
 
 ```bash
 alembic -c alembic.ini upgrade head
@@ -488,7 +599,7 @@ Migrations live in `migrations/versions/`.
 
 ---
 
-## Troubleshooting
+## 🧯 Troubleshooting
 
 **Bot doesn't start**
 - Check `DISCORD_TOKEN` and `SERVER_ID` in `.env`
@@ -514,3 +625,24 @@ Migrations live in `migrations/versions/`.
 - `init_db_manager()` runs before `get_db_manager()` — the bot calls
   `init_db()` in its `setup_hook` before loading cogs
 - Tests handle this via `conftest.py` fixtures
+
+---
+
+## 🛟 Need help?
+
+- **Bugs and feature requests:** open an issue on this repository's tracker, or
+  ping the bot's host in your Discord server.
+- **Before reporting:** include the command you ran, what you expected, and the
+  relevant lines from the bot's stdout log.
+- **Never share secrets:** don't paste your bot token, `.env` contents, or
+  database files into an issue. Revoke and regenerate the token if it leaks.
+
+---
+
+<div align="center">
+
+### 🎯 Organize. Compete. Have fun.
+
+**TopGoalPost** · Built for competitive communities.
+
+</div>
