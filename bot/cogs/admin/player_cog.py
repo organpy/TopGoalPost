@@ -10,7 +10,6 @@ from typing import Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
-from sqlalchemy import text
 
 from bot.cogs.checks import require_host_app
 from bot.cogs.scheduling.schedule_cog import (
@@ -22,12 +21,14 @@ from bot.cogs.scheduling.schedule_cog import (
     time_autocomplete,
     timezone_autocomplete,
 )
+from bot.cogs.standings.stats_cog import season_autocomplete
 from bot.db import (
     get_db_manager,
     PlayerRepository,
     PlayerSeasonRepository,
 )
 from bot.services.match import MatchService
+from bot.services.player_stats import PlayerStatsService
 from bot.services.scheduler import SchedulerService, WEEKDAYS, parse_weekday
 from bot.services.season import SeasonService
 from bot.services.signup import SignupService
@@ -56,6 +57,7 @@ class PlayerCog(commands.Cog):
         self.season_service = SeasonService()
         self.signup_service = SignupService()
         self.match_service = MatchService()
+        self.stats_service = PlayerStatsService()
 
     # ── helpers ───────────────────────────────────────────────
 
@@ -87,13 +89,20 @@ class PlayerCog(commands.Cog):
     # ── info ──────────────────────────────────────────────────
 
     @player.command(name="info", description="Show everything stored for a player")
-    @app_commands.describe(target="The player to inspect")
+    @app_commands.describe(
+        target="The player to inspect",
+        season="Season number (defaults to the current one)",
+    )
+    @app_commands.autocomplete(season=season_autocomplete)
     @require_host_app()
     async def info_cmd(
-        self, interaction: discord.Interaction, target: discord.User
+        self,
+        interaction: discord.Interaction,
+        target: discord.User,
+        season: int = None,
     ):
         await interaction.response.defer(ephemeral=True)
-        season_num = await self.season_service.get_current_season_number()
+        season_num = season or await self.season_service.get_current_season_number()
 
         timezone_str = await self.scheduler.get_timezone(target.id)
         weekly = await self.scheduler.get_weekly_timeslots(target.id)
@@ -108,50 +117,46 @@ class PlayerCog(commands.Cog):
                     f"{target.mention} is not registered.", ephemeral=True
                 )
                 return
+            player_id = player.id
+            name = player.name
+            discord_id = player.discord_id
+            country = player.country
 
-            embed = discord.Embed(
-                title=f"Player: {player.name}", color=discord.Color.blurple()
+        embed = discord.Embed(title=f"Player: {name}", color=discord.Color.blurple())
+        embed.add_field(name="Discord ID", value=f"`{discord_id}`")
+        embed.add_field(name="Country", value=(country or "—").upper())
+        embed.add_field(name="Timezone", value=timezone_str or "—")
+
+        stats = (
+            await self.stats_service.get_stats(player_id, season_num)
+            if season_num
+            else None
+        )
+        if stats and stats.has_data:
+            lines = [
+                f"**Open:** {stats.open_summary}",
+                f"**Play-in:** {stats.record_summary(stats.playin)}",
+                f"**Swiss:** {stats.record_summary(stats.swiss)}",
+                f"**Playoff:** {stats.record_summary(stats.playoff)}",
+            ]
+            if stats.playin_rank:
+                lines.append(f"**Playin Rank:** #{stats.playin_rank}")
+            if stats.hp is not None:
+                lines.append(f"**HP:** {stats.hp}")
+            if stats.champion:
+                lines.append("**Champion**")
+            total = stats.total
+            lines.append(
+                f"**Totals:** {total.games} games · {total.wins}-{total.losses} · "
+                f"goals {total.goals_for}-{total.goals_against}"
             )
-            embed.add_field(name="Discord ID", value=f"`{player.discord_id}`")
-            embed.add_field(name="Country", value=(player.country or "—").upper())
-            embed.add_field(name="Timezone", value=timezone_str or "—")
-
-            if season_num:
-                ps = await PlayerSeasonRepository(session).get(
-                    player_id=player.id, season_number=season_num
-                )
-                if ps:
-                    if ps.swiss_seed and ps.swiss_seed > 0:
-                        record = f"Skipped Open (seed #{ps.swiss_seed})"
-                    else:
-                        record = f"{ps.open_wins} - {ps.open_losses} (GD {ps.open_gd:+d})"
-                    embed.add_field(
-                        name=f"Season {season_num}",
-                        value=(
-                            f"**Open:** {record}\n"
-                            f"**HP:** {ps.hp}\n"
-                            f"**Playin Rank:** {ps.playin_rank or '—'}"
-                        ),
-                        inline=False,
-                    )
-                else:
-                    embed.add_field(
-                        name=f"Season {season_num}",
-                        value="Not registered for this season",
-                        inline=False,
-                    )
-
-            result = await session.execute(
-                text(
-                    "SELECT COUNT(*), SUM(is_winner) FROM match_players "
-                    "WHERE player_id = :pid"
-                ),
-                {"pid": player.id},
-            )
-            total, wins = result.first() or (0, 0)
             embed.add_field(
-                name="All-Time",
-                value=f"**Matches:** {total or 0}\n**Wins:** {wins or 0}",
+                name=f"Season {stats.season}", value="\n".join(lines), inline=False
+            )
+        elif season_num:
+            embed.add_field(
+                name=f"Season {season_num}",
+                value="Not registered for this season",
                 inline=False,
             )
 

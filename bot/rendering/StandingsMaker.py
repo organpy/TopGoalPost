@@ -406,7 +406,7 @@ def _emoji_to_filename(emoji: str) -> str:
     return "-".join(parts) + ".png" if parts else ""
 
 
-def get_flag(country_code: str) -> Image:
+def get_flag(country_code: str, width: float | None = None) -> Image:
     emoji = _country_to_emoji(country_code)
     flag_path = asset_path("flags", f"{emoji}.png")
     try:
@@ -426,10 +426,8 @@ def get_flag(country_code: str) -> Image:
                 pass
         if flag is None:
             flag = Image.new("RGBA", (72, 72), (0, 0, 0, 0))
-    scaling_factor = flag_w * 0.75 / flag.width
-    flag = flag.resize((int(flag.width * scaling_factor), int(flag.height * scaling_factor)), resample=1)
-    return flag
-    scaling_factor = flag_w * 0.75 / flag.width
+    target_w = width if width is not None else flag_w * 0.75
+    scaling_factor = target_w / flag.width
     flag = flag.resize((int(flag.width * scaling_factor), int(flag.height * scaling_factor)), resample=1)
     return flag
 

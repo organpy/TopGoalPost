@@ -137,9 +137,9 @@ Score confirmed and submitted successfully!
 Match 361 · Playoff W-R1-M3 · organ 5-0 dummy · Series 1-0 · G1 5-0, G2 3-2
 ```
 
-User-facing slash commands (`/signup`, `/profile`, `/history`, `/open`,
-`/playins`, `/swiss`, `/playoff`, `/check_times`, `/set_timezone`, `/forfeit`,
-`/editname`, …) all reply ephemerally, so the channel stays clean.
+User-facing slash commands (`/signup`, `/profile`, `/playercard`, `/history`,
+`/open`, `/playins`, `/swiss`, `/playoff`, `/check_times`, `/set_timezone`,
+`/forfeit`, `/editname`, …) all reply ephemerally, so the channel stays clean.
 
 `/set_score` can edit a completed match. The autocomplete searches every
 match in the season, including completed ones, shows the score, and marks
@@ -315,7 +315,7 @@ database. Every subcommand is host-only and replies ephemerally.
 
 | Command | Description |
 |---------|-------------|
-| `/player info target:@P` | Everything stored: ID, country, timezone, season stats, availability |
+| `/player info target:@P [season:N]` | Everything stored: ID, country, timezone, season stats, availability |
 | `/player set target:@P [name] [country] [timezone]` | Patch identity; only supplied options change, `country:none` clears |
 | `/player stats target:@P [seed] [playin_rank] [hp] [open_wins] [open_losses] [open_gd]` | Patch season stats; `seed:0` / `playin_rank:0` clear |
 | `/player add_weekly target:@P weekday:Fri start:19:00 finish:21:30` | Add a recurring slot (times are in the player's timezone) |
@@ -328,8 +328,9 @@ database. Every subcommand is host-only and replies ephemerally.
 | `/player substitute old:@P new:@P` | Replace a player in all uncompleted matches |
 
 Destructive subcommands ask for a Confirm click first. `/player info` reports
-`Skipped Open (seed #N)` instead of a misleading `0-0` for returning seeds.
-`/player set name:` does not rename the Discord nickname.
+`Skipped Open (seed #N)` for returning seeds and `Did not play` for players
+with no Open matches, instead of a misleading `0-0`. `/player set name:` does
+not rename the Discord nickname.
 
 ### Player commands
 
@@ -344,8 +345,14 @@ Destructive subcommands ask for a Confirm click first. `/player info` reports
 | `/list_matches [stage] [status] [round_num] [player] [page]` | Browse matches with filters |
 | `/open`, `/playins`, `/swiss` | Standings images |
 | `/playoff view:full\|winners\|losers` | Full bracket or one branch |
-| `/profile username:User` | Player stats (says "Skipped Open" for seeded returners) |
-| `/history username:User` | Recent match results |
+| `/profile username:User [season:N]` | Season stats: games, wins, goals, GD, per-stage records |
+| `/playercard username:User [season:N]` | Rendered player card image (games, wins, goals, stage table) |
+| `/history username:User [season:N]` | Recent match results |
+
+`season:` defaults to the current season and autocompletes every season that
+still has data. Stats are computed from completed matches, so a player who did
+not play Open shows `Did not play` and a seeded returner shows
+`Skipped Open (seed #N)` — never `0-0`.
 
 All of these reply ephemerally, including the standings images.
 

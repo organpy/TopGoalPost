@@ -15,6 +15,7 @@ try:
 except ImportError:
     pytest.skip("discord.py not installed — skipping cog tests", allow_module_level=True)
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest_asyncio
@@ -472,28 +473,43 @@ class TestMatchCog:
 class TestStatsCog:
     """Discord-only regressions that don't require a live gateway."""
 
-    async def test_profile_accepts_sqlalchemy_text_query(self, mock_interaction, mock_bot):
+    @staticmethod
+    async def _seed_season(session, number: int = 1):
+        from bot.db.models import Season, SeasonStatus
+
+        session.add(Season(number=number, status=SeasonStatus.ACTIVE))
+        await session.flush()
+
+    async def test_profile_sends_embed_for_registered_player(
+        self, mock_interaction, mock_bot
+    ):
         async with get_db_manager().get_session() as session:
-            await PlayerRepository(session).create(
+            await self._seed_season(session)
+            player = await PlayerRepository(session).create(
                 discord_id=mock_interaction.user.id,
                 name="ProfileTester",
+            )
+            await PlayerSeasonRepository(session).create(
+                player_id=player.id, season_number=1
             )
             await session.commit()
 
         cog = StatsCog(mock_bot)
-        cog.season_service.get_current_season_number = AsyncMock(return_value=None)
+        cog.season_service.get_current_season_number = AsyncMock(return_value=1)
 
         await cog.profile_cmd.callback(cog, mock_interaction)
 
-        mock_interaction.response.send_message.assert_awaited()
-        embed = mock_interaction.response.send_message.call_args.kwargs.get("embed")
+        mock_interaction.followup.send.assert_awaited()
+        embed = mock_interaction.followup.send.call_args.kwargs.get("embed")
         assert embed is not None
-        assert embed.title == "Profile: ProfileTester"
+        assert embed.title == "ProfileTester"
+        assert mock_interaction.followup.send.call_args.kwargs["ephemeral"] is True
 
     async def _profile_embed(self, mock_interaction, mock_bot, **season_kwargs):
         from bot.db.repositories import PlayerSeasonRepository
 
         async with get_db_manager().get_session() as session:
+            await self._seed_season(session)
             player = await PlayerRepository(session).create(
                 discord_id=mock_interaction.user.id,
                 name="ProfileTester",
@@ -508,7 +524,7 @@ class TestStatsCog:
         cog = StatsCog(mock_bot)
         cog.season_service.get_current_season_number = AsyncMock(return_value=1)
         await cog.profile_cmd.callback(cog, mock_interaction)
-        return mock_interaction.response.send_message.call_args.kwargs.get("embed")
+        return mock_interaction.followup.send.call_args.kwargs.get("embed")
 
     async def test_profile_marks_open_as_skipped(self, mock_interaction, mock_bot):
         embed = await self._profile_embed(
@@ -522,16 +538,60 @@ class TestStatsCog:
         # A zeroed Open record must never be shown as 0 - 0.
         assert not any("0 - 0" in field.value for field in embed.fields)
 
+    async def test_profile_says_did_not_play_when_open_is_empty(
+        self, mock_interaction, mock_bot
+    ):
+        embed = await self._profile_embed(mock_interaction, mock_bot)
+
+        fields = {field.name: field.value for field in embed.fields}
+        assert fields["Open"] == "Did not play"
+
     async def test_profile_shows_open_record_for_players_who_played(
         self, mock_interaction, mock_bot
     ):
-        embed = await self._profile_embed(
-            mock_interaction, mock_bot, open_wins=4, open_losses=2, open_gd=7, hp=2
-        )
+        from bot.db.models import Match, MatchPlayer
+        from bot.db.repositories import EventRepository, EventType
+
+        async with get_db_manager().get_session() as session:
+            await self._seed_season(session)
+            player = await PlayerRepository(session).create(
+                discord_id=mock_interaction.user.id,
+                name="ProfileTester",
+            )
+            opponent = await PlayerRepository(session).create(
+                discord_id=555, name="Rival"
+            )
+            await PlayerSeasonRepository(session).create(
+                player_id=player.id, season_number=1
+            )
+            event = await EventRepository(session).create(
+                name="Open", event_type=EventType.OPEN, season=1
+            )
+            for mine, theirs in ((5, 1), (3, 0)):
+                match = Match(event_id=event.id, completed_at=datetime.utcnow())
+                session.add(match)
+                await session.flush()
+                session.add_all([
+                    MatchPlayer(
+                        match_id=match.id, side=0, player_id=player.id,
+                        goals=mine, is_winner=True,
+                    ),
+                    MatchPlayer(
+                        match_id=match.id, side=1, player_id=opponent.id,
+                        goals=theirs, is_winner=False,
+                    ),
+                ])
+            await session.commit()
+
+        cog = StatsCog(mock_bot)
+        cog.season_service.get_current_season_number = AsyncMock(return_value=1)
+        await cog.profile_cmd.callback(cog, mock_interaction)
+        embed = mock_interaction.followup.send.call_args.kwargs.get("embed")
 
         fields = {field.name: field.value for field in embed.fields}
-        assert "4 - 2" in fields["Current Season Stats"]
-        assert "Skipped Open" not in fields["Current Season Stats"]
+        assert fields["Open"] == "2-0 · GD +7"
+        assert "Skipped Open" not in fields["Open"]
+        assert "8" in fields["Totals"]
 
 
 class TestDashboardView:

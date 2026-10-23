@@ -1,15 +1,38 @@
-"""Stats and profile cog."""
+"""Stats and profile cog.
+
+Thin layer over PlayerStatsService: resolve who and which season, then either
+format an embed or hand the same dataclass to the card renderer.
+"""
+
+import asyncio
 
 import discord
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
-from sqlalchemy import select, text
+from sqlalchemy import select
 
-from bot.services.season import SeasonService
+from bot.rendering import asset_path
+from bot.rendering.playercard import render_player_card
 from bot.services.match import MatchService
-from bot.db import get_db_manager, PlayerRepository, PlayerSeasonRepository
+from bot.services.player_stats import PlayerStats, PlayerStatsService
+from bot.services.season import SeasonService
+from bot.db import get_db_manager, PlayerRepository
 from bot.db.models import Player as DbPlayer
+
+CHAMPION_COLOR = discord.Color.from_rgb(245, 196, 70)
+
+
+async def season_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[int]]:
+    """Seasons that actually have tournament data, newest first."""
+    seasons = await PlayerStatsService().available_seasons()
+    return [
+        app_commands.Choice(name=f"Season {number}", value=number)
+        for number in seasons
+        if current in str(number)
+    ][:25]
 
 
 class HistoryView(View):
@@ -53,8 +76,13 @@ class StatsCog(commands.Cog):
         self.db = get_db_manager()
         self.season_service = SeasonService()
         self.match_service = MatchService()
+        self.stats_service = PlayerStatsService()
 
-    async def username_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    # ── resolution ────────────────────────────────────────────
+
+    async def username_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
         if not current:
             return []
         async with self.db.get_session() as session:
@@ -63,90 +91,200 @@ class StatsCog(commands.Cog):
             players = result.scalars().all()
             return [app_commands.Choice(name=p.name, value=p.name) for p in players]
 
-    @app_commands.command(name="profile", description="View a player's profile and stats")
-    @app_commands.describe(username="Player's registered name (leave blank for yourself)")
-    @app_commands.autocomplete(username=username_autocomplete)
-    async def profile_cmd(self, interaction: discord.Interaction, username: str = None):
-        season_num = await self.season_service.get_current_season_number()
+    async def _resolve(self, interaction, username, season):
+        """Return (player, season_number), or None after explaining why not."""
+        season_num = season or await self.season_service.get_current_season_number()
+        if not season_num:
+            await interaction.followup.send(
+                "No active season. Create one with `!season create N`.",
+                ephemeral=True,
+            )
+            return None
 
         async with self.db.get_session() as session:
-            player_repo = PlayerRepository(session)
+            repo = PlayerRepository(session)
             if username:
-                player = await player_repo.get_by_name(username)
-                if not player:
-                    await interaction.response.send_message(f"Player '{username}' not found.", ephemeral=True)
-                    return
+                player = await repo.get_by_name(username)
             else:
-                player = await player_repo.get_by_discord_id(interaction.user.id)
-                if not player:
-                    await interaction.response.send_message("You are not registered. Use /signup first.", ephemeral=True)
-                    return
+                player = await repo.get_by_discord_id(interaction.user.id)
 
-            embed = discord.Embed(title=f"Profile: {player.name}", color=discord.Color.green())
-            if player.country:
-                embed.description = f"Flag: :flag_{player.country.lower()}:"
-
-            if season_num:
-                ps_repo = PlayerSeasonRepository(session)
-                ps = await ps_repo.get(player_id=player.id, season_number=season_num)
-                if ps:
-                    if ps.swiss_seed and ps.swiss_seed > 0:
-                        # Skippers have their Open record zeroed, so showing
-                        # "0 - 0" would read as two losses' worth of nothing.
-                        embed.add_field(
-                            name="Open",
-                            value=f"Skipped Open (Swiss seed #{ps.swiss_seed})",
-                            inline=False,
-                        )
-                        embed.add_field(name="HP", value=str(ps.hp))
-                    else:
-                        embed.add_field(name="Current Season Stats", value=f"**Open Record:** {ps.open_wins} - {ps.open_losses}\n**Goal Difference:** {ps.open_gd}\n**HP:** {ps.hp}", inline=False)
-                    if ps.playin_rank:
-                        embed.add_field(name="Playin Rank", value=str(ps.playin_rank))
-
-            stmt = text(
-                "SELECT COUNT(*), SUM(is_winner), SUM(goals) "
-                "FROM match_players WHERE player_id = :pid"
+        if player is None:
+            message = (
+                f"Player '{username}' not found."
+                if username
+                else "You are not registered. Use /signup first."
             )
-            result = await session.execute(stmt, {"pid": player.id})
-            row = result.first()
-            if row and row[0] > 0:
-                total, wins, goals = row
-                losses = total - wins
-                embed.add_field(name="All-Time Record", value=f"**Matches:** {total}\n**W-L:** {wins} - {losses}\n**Goals Scored:** {goals}", inline=False)
+            await interaction.followup.send(message, ephemeral=True)
+            return None
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return player, season_num
 
-    @app_commands.command(name="history", description="View a player's match history")
-    @app_commands.describe(username="Player's registered name (leave blank for yourself)")
-    @app_commands.autocomplete(username=username_autocomplete)
-    async def history_cmd(self, interaction: discord.Interaction, username: str = None):
-        season_num = await self.season_service.get_current_season_number()
-        if not season_num:
-            await interaction.response.send_message("No active season.", ephemeral=True)
+    async def _load_stats(self, interaction, username, season):
+        resolved = await self._resolve(interaction, username, season)
+        if resolved is None:
+            return None
+        player, season_num = resolved
+
+        stats = await self.stats_service.get_stats(player.id, season_num)
+        if stats is None:
+            await interaction.followup.send(
+                f"Player '{player.name}' not found.", ephemeral=True
+            )
+            return None
+        if not stats.has_data:
+            await interaction.followup.send(
+                f"{player.name} did not play Season {season_num}.", ephemeral=True
+            )
+            return None
+        return stats
+
+    # ── formatting ────────────────────────────────────────────
+
+    @staticmethod
+    def _stage_line(stats: PlayerStats, stage: str, record) -> str:
+        champion = stage == "PLAYOFF" and stats.champion
+        if not record.played:
+            return "Champion" if champion else "Did not play"
+        text = f"{record.wins}-{record.losses}"
+        if stage == "PLAYIN" and stats.playin_rank:
+            text += f" · Rank #{stats.playin_rank}"
+        if stage == "SWISS" and stats.swiss_seed:
+            text += f" · Seed #{stats.swiss_seed}"
+        if champion:
+            text += " · Champion"
+        return text
+
+    def _profile_embed(self, stats: PlayerStats) -> discord.Embed:
+        embed = discord.Embed(
+            title=stats.name,
+            description=(
+                f"Season {stats.season} · "
+                f"{'Active' if stats.season_active else 'Archived'}"
+            ),
+            color=CHAMPION_COLOR if stats.champion else discord.Color.green(),
+        )
+        if stats.country:
+            embed.add_field(
+                name="Country",
+                value=f":flag_{stats.country.lower()}: {stats.country.upper()}",
+                inline=True,
+            )
+        if stats.hp is not None:
+            embed.add_field(name="HP", value=str(stats.hp), inline=True)
+
+        embed.add_field(name="Open", value=stats.open_summary, inline=False)
+        embed.add_field(
+            name="Play-in",
+            value=self._stage_line(stats, "PLAYIN", stats.playin),
+            inline=True,
+        )
+        embed.add_field(
+            name="Swiss",
+            value=self._stage_line(stats, "SWISS", stats.swiss),
+            inline=True,
+        )
+        embed.add_field(
+            name="Playoff",
+            value=self._stage_line(stats, "PLAYOFF", stats.playoff),
+            inline=True,
+        )
+
+        total = stats.total
+        embed.add_field(
+            name="Totals",
+            value=(
+                f"**Games:** {total.games} · **W-L:** {total.wins}-{total.losses}\n"
+                f"**Goals:** {total.goals_for}-{total.goals_against} · "
+                f"**GD:** {total.goal_diff:+d} · "
+                f"**Win rate:** {total.win_rate:.0%}"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="Use /playercard for the image version")
+        return embed
+
+    # ── commands ──────────────────────────────────────────────
+
+    @app_commands.command(name="profile", description="View a player's season stats")
+    @app_commands.describe(
+        username="Player's registered name (leave blank for yourself)",
+        season="Season number (defaults to the current one)",
+    )
+    @app_commands.autocomplete(
+        username=username_autocomplete, season=season_autocomplete
+    )
+    async def profile_cmd(
+        self,
+        interaction: discord.Interaction,
+        username: str = None,
+        season: int = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        stats = await self._load_stats(interaction, username, season)
+        if stats is None:
+            return
+        await interaction.followup.send(embed=self._profile_embed(stats), ephemeral=True)
+
+    @app_commands.command(name="playercard", description="Render a player card image")
+    @app_commands.describe(
+        username="Player's registered name (leave blank for yourself)",
+        season="Season number (defaults to the current one)",
+    )
+    @app_commands.autocomplete(
+        username=username_autocomplete, season=season_autocomplete
+    )
+    async def playercard_cmd(
+        self,
+        interaction: discord.Interaction,
+        username: str = None,
+        season: int = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        stats = await self._load_stats(interaction, username, season)
+        if stats is None:
             return
 
+        filename = asset_path(
+            "tables", f"card_{stats.discord_id}_s{stats.season}.png"
+        )
+        try:
+            await asyncio.to_thread(render_player_card, stats, filename)
+        except Exception as exc:  # pragma: no cover - defensive
+            await interaction.followup.send(f"Failed to render card: {exc}", ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            file=discord.File(filename, filename=f"card_s{stats.season}.png"),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="history", description="View a player's match history")
+    @app_commands.describe(
+        username="Player's registered name (leave blank for yourself)",
+        season="Season number (defaults to the current one)",
+    )
+    @app_commands.autocomplete(
+        username=username_autocomplete, season=season_autocomplete
+    )
+    async def history_cmd(
+        self,
+        interaction: discord.Interaction,
+        username: str = None,
+        season: int = None,
+    ):
         await interaction.response.defer(ephemeral=True)
-
-        async with self.db.get_session() as session:
-            player_repo = PlayerRepository(session)
-            if username:
-                player = await player_repo.get_by_name(username)
-                if not player:
-                    await interaction.followup.send(f"Player '{username}' not found.", ephemeral=True)
-                    return
-            else:
-                player = await player_repo.get_by_discord_id(interaction.user.id)
-                if not player:
-                    await interaction.followup.send("You are not registered. Use /signup first.", ephemeral=True)
-                    return
-
-            display_name = player.name
+        resolved = await self._resolve(interaction, username, season)
+        if resolved is None:
+            return
+        player, season_num = resolved
 
         matches = await self.match_service.get_match_history(player.id, season_num)
 
         if not matches:
-            await interaction.followup.send(f"{display_name} has no completed matches this season.", ephemeral=True)
+            await interaction.followup.send(
+                f"{player.name} has no completed matches in Season {season_num}.",
+                ephemeral=True,
+            )
             return
 
         lines = []
@@ -162,7 +300,7 @@ class StatsCog(commands.Cog):
         pages = []
         for i in range(0, len(lines), per_page):
             chunk = lines[i:i + per_page]
-            header = f"**Match History for {display_name}** (Season {season_num})\n"
+            header = f"**Match History for {player.name}** (Season {season_num})\n"
             header += f"Page {i // per_page + 1}/{(len(lines) - 1) // per_page + 1}\n\n"
             pages.append(header + "\n".join(chunk))
 

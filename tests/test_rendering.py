@@ -450,3 +450,51 @@ async def test_playoff_champion_card_is_highlighted(db, tmp_path, monkeypatch):
         assert _count_champion_pixels(img, "GF-M1") > 100
         # The reset card does not exist yet, so it stays plain.
         assert _count_champion_pixels(img, "GF-M2") == 0
+
+
+def test_player_card_renders_every_state(tmp_path):
+    """The card is pure: it renders from a dataclass with no database."""
+    from bot.rendering.playercard import CARD_H, CARD_W, render_player_card
+    from bot.services.player_stats import PlayerStats, StageRecord
+
+    played = PlayerStats(
+        player_id=1,
+        name="organ",
+        country="US",
+        discord_id=1001,
+        season=3,
+        season_active=True,
+        registered=True,
+        open=StageRecord(games=4, wins=3, losses=1, goals_for=12, goals_against=6),
+        playin=StageRecord(games=3, wins=2, losses=1, goals_for=7, goals_against=5),
+        swiss=StageRecord(games=4, wins=3, losses=1, goals_for=10, goals_against=8),
+        playoff=StageRecord(games=5, wins=3, losses=2, goals_for=13, goals_against=11),
+        playin_rank=7,
+        hp=2,
+        champion=True,
+    )
+    skipped = PlayerStats(
+        player_id=2,
+        name="A name long enough to be clipped by the header",
+        country="BR",
+        discord_id=1002,
+        season=3,
+        season_active=True,
+        registered=True,
+        swiss_seed=4,
+        hp=4,
+    )
+    empty = PlayerStats(
+        player_id=3,
+        name="newbie",
+        country=None,
+        discord_id=1003,
+        season=2,
+        season_active=False,
+        registered=True,
+    )
+
+    for name, stats in (("played", played), ("skipped", skipped), ("empty", empty)):
+        path = render_player_card(stats, str(tmp_path / f"{name}.png"))
+        with Image.open(path) as img:
+            assert img.size == (CARD_W, CARD_H)
