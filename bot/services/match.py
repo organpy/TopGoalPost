@@ -13,6 +13,7 @@ from bot.db import (
     MatchPlayer,
     Player,
     PlayerSeason,
+    Event,
     EventType,
     MatchRepository,
     MatchPlayerRepository,
@@ -695,62 +696,160 @@ class MatchService:
 
             await session.commit()
 
-    async def substitute_player(self, old_discord_id: int, new_discord_id: int, season: int) -> str:
-        """Swap a player in all uncompleted matches in a season.
+    async def substitute_player(
+        self, old_player_id: int, new_player_id: int, season: int
+    ) -> str:
+        """Move a player's current-season slot to another player.
 
-        Args:
-            old_discord_id: Discord ID of the player being replaced
-            new_discord_id: Discord ID of the player taking over
-            season: Season number to scope the substitution
+        Unplayed matches in every stage move to the replacement. Completed Open
+        matches move too, so a substitute inherits the results that still count
+        toward the Open standings; ``reset_open_matches`` can clear those if the
+        replaced player cheated. Completed Playin/Swiss/Playoff matches stay with
+        the original player for history.
 
-        Returns:
-            Status message describing what was done.
+        The original ``PlayerSeason`` row is transferred (or merged) to the new
+        player so seeds, HP and Open records follow the slot.
         """
         from bot.db import PlayerRepository, PlayerSeasonRepository
 
+        if old_player_id == new_player_id:
+            return "Old and new player are the same."
+
         async with self.db.get_session() as session:
             player_repo = PlayerRepository(session)
-            old_player = await player_repo.get_by_discord_id(old_discord_id)
-            new_player = await player_repo.get_by_discord_id(new_discord_id)
+            old_player = await player_repo.get_by_id(old_player_id)
+            new_player = await player_repo.get_by_id(new_player_id)
 
             if not old_player:
-                return f"No player found with Discord ID {old_discord_id}."
+                return f"No player found with internal ID {old_player_id}."
             if not new_player:
-                return f"No player found with Discord ID {new_discord_id}."
+                return f"No player found with internal ID {new_player_id}."
 
             mp_repo = MatchPlayerRepository(session)
-            old_mps = await mp_repo.get_player_matches(old_player.id)
+            moved_match_ids: set[int] = set()
 
-            swapped = 0
-            for mp in old_mps:
-                stmt = select(Match).options(selectinload(Match.match_players)).where(Match.id == mp.match_id)
-                result = await session.execute(stmt)
-                match = result.scalars().first()
-                if match and not match.completed_at:
-                    mp.player_id = new_player.id
-                    session.add(mp)
-                    swapped += 1
+            # Every unplayed match in the current season moves, regardless of
+            # stage. The replacement takes over the slot immediately.
+            unplayed = await mp_repo.get_unplayed_player_matches(
+                old_player.id, season=season
+            )
+            for mp in unplayed:
+                mp.player_id = new_player.id
+                session.add(mp)
+                moved_match_ids.add(mp.match_id)
 
-            if swapped == 0:
-                return f"{old_player.name} has no uncompleted matches to substitute."
+            # Completed Open matches still feed the Open standings. Move them
+            # too so the replacement owns the slot; reset_open_matches can clear
+            # bad results without touching the original player's history.
+            completed_open = (
+                await session.execute(
+                    select(MatchPlayer)
+                    .join(Match, Match.id == MatchPlayer.match_id)
+                    .join(Event, Event.id == Match.event_id)
+                    .where(
+                        MatchPlayer.player_id == old_player.id,
+                        Event.type == EventType.OPEN,
+                        Event.season == season,
+                        Match.completed_at.isnot(None),
+                    )
+                )
+            ).scalars().all()
+            for mp in completed_open:
+                mp.player_id = new_player.id
+                session.add(mp)
+                moved_match_ids.add(mp.match_id)
 
             ps_repo = PlayerSeasonRepository(session)
-            old_ps = await ps_repo.get(player_id=old_player.id, season_number=season)
-            new_ps = await ps_repo.get(player_id=new_player.id, season_number=season)
-            if old_ps and new_ps:
-                new_ps.open_wins = old_ps.open_wins
-                new_ps.open_losses = old_ps.open_losses
-                new_ps.open_gd = old_ps.open_gd
-                new_ps.hp = old_ps.hp
-                new_ps.playin_rank = old_ps.playin_rank
-                new_ps.swiss_seed = old_ps.swiss_seed
-                session.add(new_ps)
+            old_ps = await ps_repo.get(
+                player_id=old_player.id, season_number=season
+            )
+            new_ps = await ps_repo.get(
+                player_id=new_player.id, season_number=season
+            )
+
+            transferred = False
+            if old_ps:
+                if new_ps is None:
+                    new_ps = PlayerSeason(
+                        player_id=new_player.id, season_number=season
+                    )
+                    session.add(new_ps)
+                for field in (
+                    "open_wins",
+                    "open_losses",
+                    "open_gd",
+                    "swiss_seed",
+                    "pool",
+                    "playin_eliminated",
+                    "playin_wildcard",
+                    "playin_rank",
+                    "hp",
+                ):
+                    setattr(new_ps, field, getattr(old_ps, field))
+                await session.delete(old_ps)
+                transferred = True
+            elif new_ps is None:
+                session.add(
+                    PlayerSeason(player_id=new_player.id, season_number=season)
+                )
 
             await session.commit()
 
+        if not moved_match_ids and not transferred:
+            return (
+                f"{old_player.name} has no matches or season registration to "
+                "substitute."
+            )
+
         return (
             f"Substituted **{old_player.name}** → **{new_player.name}** "
-            f"in {swapped} uncompleted match(es)."
+            f"in {len(moved_match_ids)} match(es)."
+            f"{' Season stats transferred.' if transferred else ''}"
+        )
+
+    async def reset_open_matches(self, player_id: int, season: int) -> str:
+        """Clear a player's completed Open matches and rebuild Open stats.
+
+        Scores and winners are wiped and the matches return to the unplayed
+        state. Used after substituting a player whose predecessor cheated.
+        """
+        async with self.db.get_session() as session:
+            player = await session.get(Player, player_id)
+            if not player:
+                return f"No player found with internal ID {player_id}."
+
+            matches = (
+                await session.execute(
+                    select(Match)
+                    .join(Event, Event.id == Match.event_id)
+                    .options(selectinload(Match.match_players))
+                    .where(
+                        Event.type == EventType.OPEN,
+                        Event.season == season,
+                        Match.completed_at.isnot(None),
+                        Match.match_players.any(
+                            MatchPlayer.player_id == player_id
+                        ),
+                    )
+                )
+            ).scalars().unique().all()
+
+            for match in matches:
+                match.completed_at = None
+                for mp in match.match_players:
+                    mp.goals = 0
+                    mp.is_winner = False
+                    session.add(mp)
+                session.add(match)
+
+            await session.commit()
+
+        if matches:
+            await self.sync_open_stats(season)
+
+        return (
+            f"Reset {len(matches)} completed Open match(es) for "
+            f"**{player.name}**."
         )
 
     async def remove_player_from_matches(self, discord_id: int, season: int) -> str:

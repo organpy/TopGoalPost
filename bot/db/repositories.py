@@ -53,6 +53,24 @@ class PlayerRepository:
         await self.session.flush()
         return player
 
+    async def create_placeholder(
+        self,
+        name: str,
+        country: Optional[str] = None,
+    ) -> Player:
+        """Create a player with no Discord account yet.
+
+        ``discord_id`` is non-nullable, so name-only substitutes get a unique
+        negative ID. Positive IDs are reserved for real Discord snowflakes.
+        """
+        lowest = (
+            await self.session.execute(select(func.min(Player.discord_id)))
+        ).scalar()
+        placeholder_id = min(lowest or 0, 0) - 1
+        return await self.create(
+            discord_id=placeholder_id, name=name, country=country
+        )
+
     async def update(
         self,
         player_id: int,

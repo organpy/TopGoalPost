@@ -21,7 +21,7 @@ from bot.cogs.scheduling.schedule_cog import (
     time_autocomplete,
     timezone_autocomplete,
 )
-from bot.ui.autocomplete import season_autocomplete
+from bot.ui.autocomplete import season_autocomplete, username_autocomplete
 from bot.db import (
     get_db_manager,
     PlayerRepository,
@@ -535,6 +535,122 @@ class PlayerCog(commands.Cog):
             await interaction.followup.send("No active season.", ephemeral=True)
         return season_num
 
+    @staticmethod
+    def _clean_player_token(token: str) -> str:
+        token = (token or "").strip()
+        if token.startswith("<@") and token.endswith(">"):
+            token = token[2:-1].lstrip("!")
+        return token
+
+    async def _resolve_player_token(self, token: str, season: int):
+        return await self.stats_service.resolve_player(
+            self._clean_player_token(token), season
+        )
+
+    @staticmethod
+    def _find_member(guild, token: str):
+        if guild is None:
+            return None
+        try:
+            member = guild.get_member_named(token)
+        except Exception:
+            member = None
+        if member:
+            return member
+
+        try:
+            members = list(getattr(guild, "members", []) or [])
+        except TypeError:
+            members = []
+        wanted = token.lower()
+        for member in members:
+            names = {
+                getattr(member, attr, None)
+                for attr in ("name", "display_name", "nick", "global_name")
+            }
+            if any(
+                isinstance(name, str) and name.lower() == wanted
+                for name in names
+            ):
+                return member
+        return None
+
+    async def _discord_name(
+        self, interaction: discord.Interaction, discord_id: int
+    ) -> Optional[str]:
+        guild = interaction.guild
+        member = guild.get_member(discord_id) if guild else None
+        if member is None and guild is not None:
+            try:
+                member = await guild.fetch_member(discord_id)
+            except Exception:
+                member = None
+        if member is not None:
+            return (
+                getattr(member, "display_name", None)
+                or getattr(member, "name", None)
+                or str(discord_id)
+            )
+        try:
+            user = await self.bot.fetch_user(discord_id)
+        except Exception:
+            return None
+        return (
+            getattr(user, "display_name", None)
+            or getattr(user, "name", None)
+            or str(discord_id)
+        )
+
+    async def _prepare_new_player(
+        self, interaction: discord.Interaction, token: str, season: int
+    ) -> tuple[Optional[object], Optional[str], Optional[int], Optional[str]]:
+        """Resolve a substitute or describe the player that must be created."""
+        token = self._clean_player_token(token)
+        player = await self.stats_service.resolve_player(token, season)
+        if player:
+            return player, player.name, None, None
+
+        if token.isdigit():
+            discord_id = int(token)
+            name = await self._discord_name(interaction, discord_id)
+            if not name:
+                return (
+                    None,
+                    None,
+                    None,
+                    f"No Discord user found with ID {token}.",
+                )
+            return None, name, discord_id, None
+
+        member = self._find_member(interaction.guild, token)
+        if member is not None:
+            name = (
+                getattr(member, "display_name", None)
+                or getattr(member, "name", None)
+                or token
+            )
+            return None, name, member.id, None
+
+        # Not in the DB or the server: create a name-only placeholder.
+        return None, token, None, None
+
+    async def _create_substitute_player(
+        self, name: str, discord_id: Optional[int]
+    ):
+        async with self.db.get_session() as session:
+            repo = PlayerRepository(session)
+            if discord_id is not None:
+                existing = await repo.get_by_discord_id(discord_id)
+                if existing:
+                    return existing
+                player = await repo.create(
+                    discord_id=discord_id, name=name[:255]
+                )
+            else:
+                player = await repo.create_placeholder(name=name[:255])
+            await session.commit()
+            return player
+
     @player.command(
         name="remove_from_matches",
         description="Detach a player from their uncompleted matches",
@@ -617,35 +733,183 @@ class PlayerCog(commands.Cog):
         await interaction.followup.send(msg, ephemeral=True)
 
     @player.command(
-        name="substitute", description="Replace a player in all uncompleted matches"
+        name="substitute",
+        description="Replace a player in the current season (name or ID)",
     )
-    @app_commands.describe(old="The player being replaced", new="The replacement")
+    @app_commands.describe(
+        old="Player being replaced (name, player ID or Discord ID)",
+        new="Replacement (name, player ID or Discord ID; may be new)",
+    )
+    @app_commands.autocomplete(
+        old=username_autocomplete, new=username_autocomplete
+    )
     @require_host_app()
     async def substitute_cmd(
         self,
         interaction: discord.Interaction,
-        old: discord.User,
-        new: discord.User,
+        old: str,
+        new: str,
     ):
         await interaction.response.defer(ephemeral=True)
         season_num = await self._season_or_reply(interaction)
         if not season_num:
             return
+
+        old_player = await self._resolve_player_token(old, season_num)
+        if not old_player:
+            await interaction.followup.send(
+                f"No player found matching **{old}**.", ephemeral=True
+            )
+            return
+
+        (
+            new_player,
+            new_name,
+            new_discord_id,
+            error,
+        ) = await self._prepare_new_player(interaction, new, season_num)
+        if error:
+            await interaction.followup.send(error, ephemeral=True)
+            return
+
+        new_label = (
+            f"**{new_player.name}**"
+            if new_player
+            else f"**{new_name}** (new player)"
+        )
         answer = await confirm(
             interaction,
-            f"Replace {old.mention} with {new.mention} in all uncompleted matches?",
+            f"Replace **{old_player.name}** with {new_label} in season "
+            f"{season_num}? Unplayed matches and completed Open results move "
+            "to the replacement.",
         )
         if not answer:
             await interaction.followup.send("Cancelled.", ephemeral=True)
             return
 
+        if new_player is None:
+            new_player = await self._create_substitute_player(
+                new_name, new_discord_id
+            )
+
         msg = await self.match_service.substitute_player(
-            old.id, new.id, season_num
+            old_player.id, new_player.id, season_num
         )
         if interaction.guild:
-            await sync_player_threads(interaction.guild, old.id, add=False)
-            await sync_player_threads(interaction.guild, new.id, add=True)
+            if old_player.discord_id > 0:
+                await sync_player_threads(
+                    interaction.guild, old_player.discord_id, add=False
+                )
+            if new_player.discord_id > 0:
+                await sync_player_threads(
+                    interaction.guild, new_player.discord_id, add=True
+                )
         await interaction.followup.send(msg, ephemeral=True)
+
+    @player.command(
+        name="reset_matches",
+        description="Reset a player's completed Open matches (current season)",
+    )
+    @app_commands.describe(target="Player name, player ID or Discord ID")
+    @app_commands.autocomplete(target=username_autocomplete)
+    @require_host_app()
+    async def reset_matches_cmd(
+        self, interaction: discord.Interaction, target: str
+    ):
+        await interaction.response.defer(ephemeral=True)
+        season_num = await self._season_or_reply(interaction)
+        if not season_num:
+            return
+
+        player = await self._resolve_player_token(target, season_num)
+        if not player:
+            await interaction.followup.send(
+                f"No player found matching **{target}**.", ephemeral=True
+            )
+            return
+
+        answer = await confirm(
+            interaction,
+            f"Reset all completed Open matches for **{player.name}** in "
+            f"season {season_num}? Scores and winners will be cleared.",
+        )
+        if not answer:
+            await interaction.followup.send("Cancelled.", ephemeral=True)
+            return
+
+        msg = await self.match_service.reset_open_matches(
+            player.id, season_num
+        )
+        await interaction.followup.send(msg, ephemeral=True)
+
+    @player.command(
+        name="switch_id",
+        description="Change a player's Discord ID",
+    )
+    @app_commands.describe(
+        target="Player name, player ID or current Discord ID",
+        new_id="New Discord ID",
+    )
+    @app_commands.autocomplete(target=username_autocomplete)
+    @require_host_app()
+    async def switch_id_cmd(
+        self,
+        interaction: discord.Interaction,
+        target: str,
+        new_id: str,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        season_num = await self._season_or_reply(interaction)
+        if not season_num:
+            return
+
+        player = await self._resolve_player_token(target, season_num)
+        if not player:
+            await interaction.followup.send(
+                f"No player found matching **{target}**.", ephemeral=True
+            )
+            return
+
+        cleaned = new_id.strip()
+        if not cleaned.isdigit() or int(cleaned) <= 0:
+            await interaction.followup.send(
+                "New ID must be a positive Discord ID.", ephemeral=True
+            )
+            return
+        new_discord_id = int(cleaned)
+        if player.discord_id == new_discord_id:
+            await interaction.followup.send(
+                f"**{player.name}** already has that Discord ID.",
+                ephemeral=True,
+            )
+            return
+
+        async with self.db.get_session() as session:
+            repo = PlayerRepository(session)
+            existing = await repo.get_by_discord_id(new_discord_id)
+            if existing and existing.id != player.id:
+                await interaction.followup.send(
+                    f"That Discord ID already belongs to **{existing.name}**.",
+                    ephemeral=True,
+                )
+                return
+            old_discord_id = player.discord_id
+            await repo.update(player.id, discord_id=new_discord_id)
+            await session.commit()
+
+        if interaction.guild:
+            if old_discord_id > 0:
+                await sync_player_threads(
+                    interaction.guild, old_discord_id, add=False
+                )
+            await sync_player_threads(
+                interaction.guild, new_discord_id, add=True
+            )
+        await interaction.followup.send(
+            f"Switched **{player.name}** from Discord ID "
+            f"`{old_discord_id}` to `{new_discord_id}`.",
+            ephemeral=True,
+        )
 
 
 async def setup(bot):

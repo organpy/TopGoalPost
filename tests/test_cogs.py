@@ -815,7 +815,7 @@ class TestPlayerAdmin:
         assert names == {
             "info", "set", "stats", "add_weekly", "add_date", "remove_slot",
             "clear_slots", "remove_from_matches", "delete_matches",
-            "forfeit_all", "substitute",
+            "forfeit_all", "substitute", "reset_matches", "switch_id",
         }
         for cmd in PlayerCog.player.commands:
             assert cmd.checks, f"{cmd.name} is missing require_host_app"
@@ -1165,6 +1165,12 @@ class TestPlayerAdmin:
         ):
             setattr(cog.match_service, method, AsyncMock(return_value="done"))
 
+        old_player = MagicMock(id=1, name="Old", discord_id=42)
+        new_player = MagicMock(id=2, name="New", discord_id=7)
+        cog.stats_service.resolve_player = AsyncMock(
+            side_effect=[old_player, new_player]
+        )
+
         with patch.object(module, "confirm", AsyncMock(return_value=True)):
             await cog.remove_from_matches_cmd.callback(
                 cog, mock_interaction, target
@@ -1172,7 +1178,7 @@ class TestPlayerAdmin:
             await cog.delete_matches_cmd.callback(cog, mock_interaction, target)
             await cog.forfeit_all_cmd.callback(cog, mock_interaction, target)
             await cog.substitute_cmd.callback(
-                cog, mock_interaction, target, self._target(7)
+                cog, mock_interaction, "Old", "New"
             )
 
         cog.match_service.remove_player_from_matches.assert_awaited_once_with(42, 1)
@@ -1180,7 +1186,71 @@ class TestPlayerAdmin:
         cog.match_service.forfeit_all_player_matches.assert_awaited_once_with(
             42, season=1
         )
-        cog.match_service.substitute_player.assert_awaited_once_with(42, 7, 1)
+        cog.match_service.substitute_player.assert_awaited_once_with(1, 2, 1)
+
+    async def test_substitute_creates_a_name_only_placeholder(
+        self, mock_interaction, mock_bot
+    ):
+        from bot.cogs.admin import player_cog as module
+
+        await self._register()
+        cog = module.PlayerCog(mock_bot)
+        cog.match_service = MagicMock()
+        cog.match_service.substitute_player = AsyncMock(return_value="done")
+        old_player = MagicMock(id=1, name="Old", discord_id=42)
+        newcomer = MagicMock(id=9, name="Ghost", discord_id=-1)
+        cog.stats_service.resolve_player = AsyncMock(
+            side_effect=[old_player, None]
+        )
+        cog._create_substitute_player = AsyncMock(return_value=newcomer)
+        mock_interaction.guild.get_member_named.return_value = None
+        mock_interaction.guild.members = []
+
+        with patch.object(module, "confirm", AsyncMock(return_value=True)):
+            await cog.substitute_cmd.callback(
+                cog, mock_interaction, "Old", "Ghost"
+            )
+
+        cog._create_substitute_player.assert_awaited_once_with("Ghost", None)
+        cog.match_service.substitute_player.assert_awaited_once_with(1, 9, 1)
+
+    async def test_reset_matches_delegates_to_the_service(
+        self, mock_interaction, mock_bot
+    ):
+        from bot.cogs.admin import player_cog as module
+
+        await self._register()
+        cog = module.PlayerCog(mock_bot)
+        cog.match_service = MagicMock()
+        cog.match_service.reset_open_matches = AsyncMock(return_value="reset")
+        cog.stats_service.resolve_player = AsyncMock(
+            return_value=MagicMock(id=1, name="Old", discord_id=42)
+        )
+
+        with patch.object(module, "confirm", AsyncMock(return_value=True)):
+            await cog.reset_matches_cmd.callback(
+                cog, mock_interaction, "Old"
+            )
+
+        cog.match_service.reset_open_matches.assert_awaited_once_with(1, 1)
+
+    async def test_switch_id_updates_the_player(
+        self, mock_interaction, mock_bot
+    ):
+        from bot.cogs.admin import player_cog as module
+
+        await self._register(discord_id=42, name="Old")
+        cog = module.PlayerCog(mock_bot)
+
+        await cog.switch_id_cmd.callback(
+            cog, mock_interaction, "Old", "777"
+        )
+
+        async with get_db_manager().get_session() as session:
+            player = await PlayerRepository(session).get_by_discord_id(777)
+            assert player is not None
+            assert player.name == "Old"
+            assert await PlayerRepository(session).get_by_discord_id(42) is None
 
     async def test_match_commands_respect_cancel(
         self, mock_interaction, mock_bot

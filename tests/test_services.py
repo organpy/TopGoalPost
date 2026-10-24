@@ -507,32 +507,217 @@ class TestMatchService:
             ).scalars().first()
             assert reset is None
 
-    async def test_substitute_player(self, db, seed_data):
+    async def test_substitute_player_moves_matches_and_stats(
+        self, db, seed_data
+    ):
         from bot.services.match import MatchService
-        svc = MatchService()
 
+        svc = MatchService()
         players = seed_data["players"]
 
         async with db.get_session() as session:
-            event_repo = EventRepository(session)
-            event = await event_repo.create("test", EventType.OPEN, 1)
-            match_repo = MatchRepository(session)
-            match = await match_repo.create(event.id)
+            event = await EventRepository(session).create(
+                "test", EventType.OPEN, 1
+            )
+            match = await MatchRepository(session).create(event.id)
             mp_repo = MatchPlayerRepository(session)
-            await mp_repo.create(match.id, side=0, player_id=players[0].id)
-            await mp_repo.create(match.id, side=1, player_id=players[1].id)
+            await mp_repo.create(
+                match.id, side=0, player_id=players[0].id
+            )
+            await mp_repo.create(
+                match.id, side=1, player_id=players[1].id
+            )
+            old_ps = await PlayerSeasonRepository(session).get(
+                players[0].id, 1
+            )
+            old_ps.open_wins = 3
+            old_ps.hp = 1
             await session.commit()
 
         result = await svc.substitute_player(
-            players[0].discord_id, players[2].discord_id, 1
+            players[0].id, players[2].id, 1
         )
         assert "Substituted" in result
+        assert "stats transferred" in result
+
+        async with db.get_session() as session:
+            mps = await MatchPlayerRepository(session).get_by_match(match.id)
+            assert sorted(mps, key=lambda mp: mp.side)[0].player_id == (
+                players[2].id
+            )
+            ps_repo = PlayerSeasonRepository(session)
+            assert await ps_repo.get(players[0].id, 1) is None
+            new_ps = await ps_repo.get(players[2].id, 1)
+            assert new_ps.open_wins == 3
+            assert new_ps.hp == 1
+
+    async def test_substitute_moves_completed_open_but_not_playin(
+        self, db, seed_data
+    ):
+        from datetime import datetime
+        from bot.services.match import MatchService
+
+        svc = MatchService()
+        players = seed_data["players"]
+
+        async with db.get_session() as session:
+            open_event = await EventRepository(session).create(
+                "open", EventType.OPEN, 1
+            )
+            playin_event = await EventRepository(session).create(
+                "playin", EventType.PLAYIN, 1
+            )
+            match_repo = MatchRepository(session)
+            mp_repo = MatchPlayerRepository(session)
+            open_match = await match_repo.create(open_event.id)
+            playin_match = await match_repo.create(playin_event.id)
+            for match in (open_match, playin_match):
+                mp1 = await mp_repo.create(
+                    match.id, side=0, player_id=players[0].id
+                )
+                await mp_repo.create(
+                    match.id, side=1, player_id=players[1].id
+                )
+                mp1.goals = 5
+                mp1.is_winner = True
+                match.completed_at = datetime.utcnow()
+            await session.commit()
+
+        await svc.substitute_player(players[0].id, players[2].id, 1)
 
         async with db.get_session() as session:
             mp_repo = MatchPlayerRepository(session)
-            mps = await mp_repo.get_by_match(match.id)
-            mps_sorted = sorted(mps, key=lambda mp: mp.side)
-            assert mps_sorted[0].player_id == players[2].id
+            open_mps = await mp_repo.get_by_match(open_match.id)
+            playin_mps = await mp_repo.get_by_match(playin_match.id)
+            assert sorted(open_mps, key=lambda mp: mp.side)[0].player_id == (
+                players[2].id
+            )
+            assert sorted(playin_mps, key=lambda mp: mp.side)[0].player_id == (
+                players[0].id
+            )
+
+    async def test_substitute_is_scoped_to_the_season(self, db, seed_data):
+        from bot.services.match import MatchService
+
+        svc = MatchService()
+        players = seed_data["players"]
+
+        async with db.get_session() as session:
+            session.add(Season(number=2, status=SeasonStatus.ACTIVE))
+            await session.flush()
+            event1 = await EventRepository(session).create(
+                "s1", EventType.OPEN, 1
+            )
+            event2 = await EventRepository(session).create(
+                "s2", EventType.OPEN, 2
+            )
+            match_repo = MatchRepository(session)
+            mp_repo = MatchPlayerRepository(session)
+            match1 = await match_repo.create(event1.id)
+            match2 = await match_repo.create(event2.id)
+            for match in (match1, match2):
+                await mp_repo.create(
+                    match.id, side=0, player_id=players[0].id
+                )
+                await mp_repo.create(
+                    match.id, side=1, player_id=players[1].id
+                )
+            await session.commit()
+
+        await svc.substitute_player(players[0].id, players[2].id, 1)
+
+        async with db.get_session() as session:
+            mp_repo = MatchPlayerRepository(session)
+            s1 = await mp_repo.get_by_match(match1.id)
+            s2 = await mp_repo.get_by_match(match2.id)
+            assert sorted(s1, key=lambda mp: mp.side)[0].player_id == (
+                players[2].id
+            )
+            assert sorted(s2, key=lambda mp: mp.side)[0].player_id == (
+                players[0].id
+            )
+
+    async def test_substitute_creates_player_season_for_new_player(
+        self, db, seed_data
+    ):
+        from bot.services.match import MatchService
+
+        svc = MatchService()
+        players = seed_data["players"]
+
+        async with db.get_session() as session:
+            newcomer = await PlayerRepository(session).create(
+                discord_id=9999, name="Newcomer"
+            )
+            event = await EventRepository(session).create(
+                "test", EventType.OPEN, 1
+            )
+            match = await MatchRepository(session).create(event.id)
+            mp_repo = MatchPlayerRepository(session)
+            await mp_repo.create(
+                match.id, side=0, player_id=players[0].id
+            )
+            await mp_repo.create(
+                match.id, side=1, player_id=players[1].id
+            )
+            await session.commit()
+
+        await svc.substitute_player(players[0].id, newcomer.id, 1)
+
+        async with db.get_session() as session:
+            ps = await PlayerSeasonRepository(session).get(newcomer.id, 1)
+            assert ps is not None
+            assert ps.open_wins == 1
+
+    async def test_reset_open_matches_clears_scores_and_stats(
+        self, db, seed_data
+    ):
+        from datetime import datetime
+        from bot.services.match import MatchService
+
+        svc = MatchService()
+        players = seed_data["players"]
+
+        async with db.get_session() as session:
+            event = await EventRepository(session).create(
+                "open", EventType.OPEN, 1
+            )
+            match = await MatchRepository(session).create(event.id)
+            mp_repo = MatchPlayerRepository(session)
+            mp1 = await mp_repo.create(
+                match.id, side=0, player_id=players[0].id
+            )
+            mp2 = await mp_repo.create(
+                match.id, side=1, player_id=players[1].id
+            )
+            mp1.goals = 5
+            mp2.goals = 2
+            mp1.is_winner = True
+            match.completed_at = datetime.utcnow()
+            await session.commit()
+
+        result = await svc.reset_open_matches(players[0].id, 1)
+        assert "Reset 1" in result
+
+        async with db.get_session() as session:
+            match = await MatchRepository(session).get_by_id(match.id)
+            assert match.completed_at is None
+            mps = await MatchPlayerRepository(session).get_by_match(match.id)
+            assert all(mp.goals == 0 and not mp.is_winner for mp in mps)
+            ps = await PlayerSeasonRepository(session).get(players[0].id, 1)
+            assert ps.open_wins == 0
+            assert ps.open_losses == 0
+            assert ps.hp == 4
+
+    async def test_placeholder_players_get_unique_negative_ids(self, db):
+        async with db.get_session() as session:
+            repo = PlayerRepository(session)
+            first = await repo.create_placeholder("Ghost One")
+            second = await repo.create_placeholder("Ghost Two")
+            await session.commit()
+
+        assert first.discord_id < 0
+        assert second.discord_id < first.discord_id
 
     async def test_get_match_history(self, db, seed_data):
         from bot.services.match import MatchService
