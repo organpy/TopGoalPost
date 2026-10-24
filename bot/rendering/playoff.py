@@ -23,7 +23,6 @@ from .StandingsMaker import (
     softgreen,
     softred,
     name_font,
-    side_font,
     mask,
     pfp_size,
     get_flag,
@@ -64,6 +63,9 @@ PLAYOFF_RESET_COLOR = (200, 60, 60)
 PLAYOFF_CHAMPION_COLOR = (245, 196, 70)
 PLAYOFF_LABEL_FONT = ImageFont.truetype(
     font=asset_path("fonts", "Agdasima-Regular.ttf"), size=20
+)
+PLAYOFF_FEEDER_FONT = ImageFont.truetype(
+    font=asset_path("fonts", "Agdasima-Regular.ttf"), size=19
 )
 
 
@@ -187,6 +189,16 @@ def _feeder_label(code: str | None, row_by_id: dict[int, list]) -> str:
         return "TBA"
     outcome = "Winner" if code[-1] == "W" else "Loser"
     return f"{outcome} of {names[0]} vs {names[1]}"
+
+
+def _playoff_placeholder_font(label: str):
+    """Feeder text is slightly larger than the old side font; TBA stays normal."""
+    return name_font if label == "TBA" else PLAYOFF_FEEDER_FONT
+
+
+def _playoff_placeholder_x(left: float) -> float:
+    """Center placeholder text across the whole player half, pfp included."""
+    return left + PLAYOFF_PLAYER_W / 2
 
 
 def _playoff_champion(
@@ -320,11 +332,15 @@ def _make_po_box(
         except Exception:
             pass
     else:
+        font = _playoff_placeholder_font(p1_label)
         d.text(
-            xy=(left + PLAYOFF_PFP_W + PLAYOFF_FLAG_W + PLAYOFF_NAME_W / 2, top + PLAYOFF_ROW_H * 0.5),
-            text=_fit_name(p1_label, PLAYOFF_NAME_W - 4, side_font),
+            xy=(
+                _playoff_placeholder_x(left),
+                top + PLAYOFF_ROW_H * 0.5,
+            ),
+            text=_fit_name(p1_label, PLAYOFF_PLAYER_W - 4, font),
             fill="white",
-            font=side_font,
+            font=font,
             anchor="mm",
         )
 
@@ -373,11 +389,15 @@ def _make_po_box(
         except Exception:
             pass
     else:
+        font = _playoff_placeholder_font(p2_label)
         d.text(
-            xy=(left + PLAYOFF_PFP_W + PLAYOFF_FLAG_W + PLAYOFF_NAME_W / 2, top + PLAYOFF_ROW_H * 1.5),
-            text=_fit_name(p2_label, PLAYOFF_NAME_W - 4, side_font),
+            xy=(
+                _playoff_placeholder_x(left),
+                top + PLAYOFF_ROW_H * 1.5,
+            ),
+            text=_fit_name(p2_label, PLAYOFF_PLAYER_W - 4, font),
             fill="white",
-            font=side_font,
+            font=font,
             anchor="mm",
         )
 
@@ -407,25 +427,9 @@ def _make_po_box(
         )
 
 
-def _source_side(slot_matches: list[list], outcome: str) -> int | None:
-    """Return the participant row that advances/eliminates, when known."""
-    if not slot_matches:
-        return None
-    match = max(slot_matches, key=lambda row: (row[13] or 0, row[9]))
-    p1, p2, winner = match[0], match[1], match[4]
-    if not winner:
-        return None
-    if outcome == "winner":
-        if winner == p1:
-            return 0
-        if winner == p2:
-            return 1
-    elif outcome == "loser" and p1 and p2:
-        if winner == p1:
-            return 1
-        if winner == p2:
-            return 0
-    return None
+def _connector_source_y(src_slot: str) -> float:
+    """Always leave a card from its center, even before a winner is known."""
+    return PLAYOFF_SLOT_POS[src_slot][1] + PLAYOFF_BOX_H / 2
 
 
 def _connector_points(
@@ -477,20 +481,12 @@ def _connector_points(
 
 def _draw_connector(
     d: ImageDraw.ImageDraw,
-    slot_map: dict[str, list[list]],
     src: str,
-    outcome: str,
     side: int | None,
     tgt: str,
 ) -> None:
-    src_top = PLAYOFF_SLOT_POS[src][1]
+    src_y = _connector_source_y(src)
     tgt_top = PLAYOFF_SLOT_POS[tgt][1]
-    src_side = _source_side(slot_map.get(src, []), outcome)
-    src_y = (
-        src_top + src_side * PLAYOFF_ROW_H + PLAYOFF_ROW_H / 2
-        if src_side is not None
-        else src_top + PLAYOFF_BOX_H / 2
-    )
     if side is None:
         tgt_y = tgt_top + PLAYOFF_BOX_H / 2
     else:
@@ -502,7 +498,6 @@ def _draw_connector(
 
 def _draw_connectors(
     d: ImageDraw.ImageDraw,
-    slot_map: dict[str, list[list]],
     allowed_slots: set[str] | None = None,
 ) -> None:
     for tgt, sources in ADVANCEMENT_REVERSE_MAP.items():
@@ -510,15 +505,15 @@ def _draw_connectors(
             continue
         if allowed_slots is not None and tgt not in allowed_slots:
             continue
-        for src, outcome, side in sources:
+        for src, _outcome, side in sources:
             if src in PLAYOFF_SLOT_POS and (
                 allowed_slots is None or src in allowed_slots
             ):
-                _draw_connector(d, slot_map, src, outcome, side, tgt)
+                _draw_connector(d, src, side, tgt)
 
     # The reset is created dynamically, so it is not in the static reverse map.
     if allowed_slots is None or "GF-M1" in allowed_slots:
-        _draw_connector(d, slot_map, "GF-M1", "winner", None, "GF-M2")
+        _draw_connector(d, "GF-M1", None, "GF-M2")
 
 
 def _column_label_top(prefix: str, col: int) -> float | None:
@@ -685,7 +680,7 @@ async def get_playoff(view: str = "full", season: int | None = None):
         )
         d = ImageDraw.Draw(img)
 
-        _draw_connectors(d, raw_slot_map, allowed_slots)
+        _draw_connectors(d, allowed_slots)
         for slot, (col, top) in PLAYOFF_SLOT_POS.items():
             if slot not in allowed_slots:
                 continue

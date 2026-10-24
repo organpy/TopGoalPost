@@ -20,6 +20,7 @@ from bot.rendering.StandingsMaker import (
 from bot.rendering.playoff import (
     PLAYOFF_BOX_H,
     PLAYOFF_BOX_W,
+    PLAYOFF_FEEDER_FONT,
     PLAYOFF_LAYOUT_H,
     PLAYOFF_LAYOUT_W,
     PLAYOFF_NAME_W,
@@ -29,7 +30,10 @@ from bot.rendering.playoff import (
     PLAYOFF_SLOT_POS,
     _card_rect,
     _connector_points,
+    _connector_source_y,
     _playoff_champion,
+    _playoff_placeholder_font,
+    _playoff_placeholder_x,
 )
 from bot.services.pairing import ADVANCEMENT_REVERSE_MAP, PLAYOFF_BRACKET
 
@@ -138,6 +142,28 @@ def test_playoff_connectors_do_not_cross_cards():
                     assert not _segment_hits_card_interior(a, b, rect), (
                         f"{src}->{tgt} crosses {slot}"
                     )
+
+
+def test_playoff_placeholder_text_is_centered_and_feeder_font_is_larger():
+    assert _playoff_placeholder_font("TBA") is name_font
+    assert _playoff_placeholder_font("Winner of A vs B") is PLAYOFF_FEEDER_FONT
+    assert PLAYOFF_FEEDER_FONT.size > 15
+    assert PLAYOFF_FEEDER_FONT.size < name_font.size
+
+    left = 123
+    assert _playoff_placeholder_x(left) == left + PLAYOFF_PLAYER_W / 2
+
+
+def test_playoff_connector_leaves_every_card_from_its_center():
+    for slot in PLAYOFF_SLOT_POS:
+        top = PLAYOFF_SLOT_POS[slot][1]
+        assert _connector_source_y(slot) == top + PLAYOFF_BOX_H / 2
+
+    src = "W-R1-M1"
+    tgt = "W-R2-M1"
+    src_y = _connector_source_y(src)
+    points = _connector_points(src, src_y, tgt, _card_center(tgt))
+    assert points[0][1] == src_y
 
 
 def test_playin_label_has_no_hp():
