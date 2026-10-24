@@ -1,7 +1,7 @@
 """Rendering layout and label tests."""
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from bot.db import ImageCacheRepository
 from bot.db.models import EventType, Season, SeasonStatus
@@ -21,17 +21,21 @@ from bot.rendering.StandingsMaker import (
 from bot.rendering.playoff import (
     PLAYOFF_BOX_H,
     PLAYOFF_BOX_W,
+    PLAYOFF_CHAMPION_COLOR,
     PLAYOFF_FEEDER_FONT,
     PLAYOFF_LAYOUT_H,
     PLAYOFF_LAYOUT_W,
+    PLAYOFF_MARGIN,
     PLAYOFF_NAME_W,
     PLAYOFF_PLAYER_W,
     PLAYOFF_ROW_H,
     PLAYOFF_SCORE_W,
     PLAYOFF_SLOT_POS,
     _card_rect,
+    _champion_banner_rect,
     _connector_points,
     _connector_source_y,
+    _draw_champion_banner,
     _playoff_champion,
     _playoff_placeholder_font,
     _playoff_placeholder_x,
@@ -153,6 +157,25 @@ def test_playoff_placeholder_text_is_centered_and_feeder_font_is_larger():
 
     left = 123
     assert _playoff_placeholder_x(left) == left + PLAYOFF_PLAYER_W / 2
+
+
+def test_playoff_champion_banner_is_top_right_and_draws_gold():
+    left, top, right, bottom = _champion_banner_rect()
+    assert top == PLAYOFF_MARGIN
+    assert right == PLAYOFF_LAYOUT_W - PLAYOFF_MARGIN
+    assert left > PLAYOFF_LAYOUT_W / 2
+    assert bottom < PLAYOFF_SLOT_POS["GF-M1"][1]
+
+    img = Image.new(
+        "RGBA", (PLAYOFF_LAYOUT_W, PLAYOFF_LAYOUT_H), (0, 0, 0, 0)
+    )
+    d = ImageDraw.Draw(img)
+    _draw_champion_banner(img, d, (123, "Champion", "US"))
+
+    assert img.getpixel((int(left) + 30, int(top))) == (
+        *PLAYOFF_CHAMPION_COLOR,
+        255,
+    )
 
 
 def test_playoff_connector_leaves_every_card_from_its_center():

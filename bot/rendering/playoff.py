@@ -68,6 +68,10 @@ PLAYOFF_LABEL_FONT = ImageFont.truetype(
 PLAYOFF_FEEDER_FONT = ImageFont.truetype(
     font=asset_path("fonts", "Agdasima-Regular.ttf"), size=19
 )
+PLAYOFF_CHAMPION_FONT = ImageFont.truetype(
+    font=asset_path("fonts", "Agdasima-Regular.ttf"), size=34
+)
+PLAYOFF_CHAMPION_PFP = 56
 
 
 def _round_number(slot: str) -> int:
@@ -200,6 +204,88 @@ def _playoff_placeholder_font(label: str):
 def _playoff_placeholder_x(left: float) -> float:
     """Center placeholder text across the whole player half, pfp included."""
     return left + PLAYOFF_PLAYER_W / 2
+
+
+def _champion_banner_rect() -> tuple[float, float, float, float]:
+    """Top-right champion banner, above the grand-final column."""
+    left = PLAYOFF_MARGIN + (PLAYOFF_COLS - 1) * PLAYOFF_COL_STEP
+    top = PLAYOFF_MARGIN
+    right = PLAYOFF_LAYOUT_W - PLAYOFF_MARGIN
+    return left, top, right, top + 92
+
+
+def _draw_champion_banner(
+    img: Image.Image,
+    d: ImageDraw.ImageDraw,
+    champion: tuple[int, str, str | None],
+) -> None:
+    champion_id, name, country = champion
+    left, top, right, _bottom = _champion_banner_rect()
+    d.rounded_rectangle(
+        (left, top, right, top + 92),
+        radius=10,
+        outline=PLAYOFF_CHAMPION_COLOR,
+        width=2,
+    )
+    d.text(
+        xy=(left + 10, top + 8),
+        text="CHAMPION",
+        fill=PLAYOFF_CHAMPION_COLOR,
+        font=PLAYOFF_LABEL_FONT,
+        anchor="la",
+    )
+
+    pfp_left = left + 10
+    pfp_top = top + 30
+    try:
+        pfp = Image.open(
+            fp=asset_path("pfps", f"{champion_id}.png")
+        ).resize(
+            (PLAYOFF_CHAMPION_PFP, PLAYOFF_CHAMPION_PFP)
+        ).convert("RGBA")
+    except FileNotFoundError:
+        try:
+            pfp = Image.open(
+                fp=asset_path("pfps", "default.png")
+            ).resize(
+                (PLAYOFF_CHAMPION_PFP, PLAYOFF_CHAMPION_PFP)
+            ).convert("RGBA")
+        except FileNotFoundError:
+            pfp = None
+    if pfp is not None:
+        img.paste(
+            im=pfp,
+            box=(int(pfp_left), int(pfp_top)),
+            mask=mask.resize((PLAYOFF_CHAMPION_PFP, PLAYOFF_CHAMPION_PFP)),
+        )
+
+    flag_left = pfp_left + PLAYOFF_CHAMPION_PFP + 8
+    if country:
+        try:
+            flag = get_flag(country)
+            img.paste(
+                im=flag,
+                box=(
+                    int(flag_left + (PLAYOFF_FLAG_W - flag.width) / 2),
+                    int(pfp_top + (PLAYOFF_CHAMPION_PFP - flag.height) / 2),
+                ),
+                mask=flag,
+            )
+        except Exception:
+            pass
+
+    name_left = flag_left + PLAYOFF_FLAG_W + 10
+    d.text(
+        xy=(name_left, pfp_top + PLAYOFF_CHAMPION_PFP / 2),
+        text=_fit_name(
+            name,
+            max(40, right - name_left - 10),
+            PLAYOFF_CHAMPION_FONT,
+        ),
+        fill=PLAYOFF_CHAMPION_COLOR,
+        font=PLAYOFF_CHAMPION_FONT,
+        anchor="lm",
+    )
 
 
 def _playoff_champion(
@@ -527,10 +613,11 @@ def _column_label_top(prefix: str, col: int) -> float | None:
 
 
 def _draw_labels(
+    img: Image.Image,
     d: ImageDraw.ImageDraw,
     allowed_slots: set[str] | None = None,
     show_grand_final: bool = True,
-    champion_name: str | None = None,
+    champion: tuple[int, str, str | None] | None = None,
 ) -> None:
     def allowed(slot: str) -> bool:
         return allowed_slots is None or slot in allowed_slots
@@ -589,16 +676,8 @@ def _draw_labels(
 
     if show_grand_final and allowed("GF-M1"):
         gf_left = PLAYOFF_MARGIN + (PLAYOFF_COLS - 1) * PLAYOFF_COL_STEP + 6
-        if champion_name:
-            d.text(
-                xy=(gf_left, PLAYOFF_SLOT_POS["GF-M1"][1] - 56),
-                text=_fit_name(
-                    f"CHAMPION: {champion_name}", PLAYOFF_BOX_W - 10, PLAYOFF_LABEL_FONT
-                ),
-                fill=PLAYOFF_CHAMPION_COLOR,
-                font=PLAYOFF_LABEL_FONT,
-                anchor="lm",
-            )
+        if champion:
+            _draw_champion_banner(img, d, champion)
         d.text(
             xy=(gf_left, PLAYOFF_SLOT_POS["GF-M1"][1] - 24),
             text="GRAND FINAL",
@@ -666,11 +745,19 @@ async def get_playoff(view: str = "full", season: int | None = None):
     }
 
     champion_id, champion_slot = _playoff_champion(slot_map)
-    champion_name = None
+    champion = None
     if champion_id:
         for match in matches:
             if match[12] == champion_slot and match[4] == champion_id:
-                champion_name = match[5] if match[0] == champion_id else match[6]
+                if match[0] == champion_id:
+                    name, country = match[5], match[7]
+                else:
+                    name, country = match[6], match[8]
+                champion = (
+                    champion_id,
+                    name or str(champion_id),
+                    country,
+                )
                 break
 
     def _render_playoff_bracket(raw_slot_map, filename_copy):
@@ -698,10 +785,11 @@ async def get_playoff(view: str = "full", season: int | None = None):
                 champion_slot=champion_slot,
             )
         _draw_labels(
+            img,
             d,
             allowed_slots,
             show_grand_final=(view in ("full", "winners")),
-            champion_name=champion_name if view in ("full", "winners") else None,
+            champion=champion if view in ("full", "winners") else None,
         )
 
         if view != "full":
@@ -712,8 +800,9 @@ async def get_playoff(view: str = "full", season: int | None = None):
                 left = PLAYOFF_MARGIN + col * PLAYOFF_COL_STEP
                 xs.extend((left, left + PLAYOFF_BOX_W))
                 ys.extend((top - 34, top + PLAYOFF_BOX_H))
-            if champion_name and view == "winners":
-                ys.append(PLAYOFF_SLOT_POS["GF-M1"][1] - 56)
+            if champion and view == "winners":
+                _, banner_top, _, banner_bottom = _champion_banner_rect()
+                ys.extend((banner_top, banner_bottom))
             if xs and ys:
                 pad = 48
                 crop = (
