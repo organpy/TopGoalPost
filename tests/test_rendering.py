@@ -3,6 +3,7 @@
 import pytest
 from PIL import Image
 
+from bot.db import ImageCacheRepository
 from bot.db.models import EventType, Season, SeasonStatus
 from bot.rendering.StandingsMaker import (
     _fit_name,
@@ -226,6 +227,35 @@ async def test_swiss_renders_fixed_five_round_board(db, tmp_path, monkeypatch):
     with Image.open(target) as img:
         # Five columns on the survival ladder.
         assert img.size[0] > 5 * 300
+
+
+async def test_swiss_reuses_and_invalidates_the_local_render_cache(
+    db, tmp_path, monkeypatch
+):
+    from bot.rendering import StandingsMaker as standings
+
+    target = tmp_path / "swiss.png"
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        await session.commit()
+
+    monkeypatch.setattr(standings, "asset_path", lambda *parts: str(target))
+
+    _, filename, table_hash = await standings.get_swiss()
+    assert filename == str(target)
+    async with db.get_session() as session:
+        assert await ImageCacheRepository(session).get(table_hash) == str(target)
+
+    cached = await standings.get_swiss()
+    assert cached[0] == str(target)
+    assert cached[1] == 0
+
+    target.unlink()
+    rerendered = await standings.get_swiss()
+    assert rerendered[1] == str(target)
+    assert target.exists()
+    async with db.get_session() as session:
+        assert await ImageCacheRepository(session).get(table_hash) == str(target)
 
 
 async def test_swiss_renders_incremental_one_sided_slot(db, tmp_path, monkeypatch):

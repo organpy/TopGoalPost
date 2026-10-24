@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import os
 import random
 
 from PIL import Image, ImageDraw, ImageFont
@@ -162,8 +163,27 @@ def _build_match_rows(matches: list[DbMatch], prefix: str) -> list[list]:
 
 
 async def _get_cached_link(session, table_hash: str) -> str | None:
+    """Return a cached image path only while the file still exists.
+
+    Old rows may contain Discord CDN URLs; those are still usable as-is.
+    """
     repo = ImageCacheRepository(session)
-    return await repo.get(table_hash)
+    cached = await repo.get(table_hash)
+    if not cached:
+        return None
+    if cached.startswith(("http://", "https://")):
+        return cached
+    if os.path.exists(cached):
+        return cached
+    await repo.delete(table_hash)
+    await session.commit()
+    return None
+
+
+async def _cache_rendered(table_hash: str, filename: str) -> None:
+    async with get_db_manager().get_session() as session:
+        await ImageCacheRepository(session).set(table_hash, filename)
+        await session.commit()
 
 
 def _match_signature(matches: list[list]) -> list[tuple]:
@@ -632,7 +652,9 @@ async def _get_open_table(
             return 0, filename, table_hash, players_copy
         return 0, filename, table_hash
 
-    return await asyncio.to_thread(_render_open_table, matches, players)
+    result = await asyncio.to_thread(_render_open_table, matches, players)
+    await _cache_rendered(table_hash, filename)
+    return result
 
 
 def _compute_playin_layout(all_ps: list[PlayerSeason]) -> dict:
@@ -903,7 +925,7 @@ async def get_playin(season: int | None = None):
         img.save(fp=filename_copy, format="png")
         return 0, filename_copy, table_hash
 
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         _render_playin,
         rounds,
         round_matches,
@@ -911,6 +933,8 @@ async def get_playin(season: int | None = None):
         filename,
         cut_preview,
     )
+    await _cache_rendered(table_hash, filename)
+    return result
 
 
 async def get_swiss(season: int | None = None):
@@ -1016,4 +1040,6 @@ async def get_swiss(season: int | None = None):
         img.save(fp=filename, format="png")
         return 0, filename, table_hash
 
-    return await asyncio.to_thread(_render_swiss)
+    result = await asyncio.to_thread(_render_swiss)
+    await _cache_rendered(table_hash, filename)
+    return result

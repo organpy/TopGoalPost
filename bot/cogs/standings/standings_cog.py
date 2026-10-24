@@ -57,20 +57,21 @@ class StandingsCog(commands.Cog):
                 result = await func(view=view, season=season_num)
             else:
                 result = await func(season=season_num)
-            link, filename, *extra = result
+            cached, filename, *extra = result
 
-            if link:
-                await interaction.followup.send(link, ephemeral=True)
+            if cached and cached.startswith(("http://", "https://")):
+                await interaction.followup.send(cached, ephemeral=True)
                 return
 
-            if not os.path.exists(filename):
+            image_path = cached or filename
+            if not os.path.exists(image_path):
                 await interaction.followup.send(
                     "Standings image not found. Generate some matches first.",
                     ephemeral=True,
                 )
                 return
 
-            img = Image.open(filename)
+            img = Image.open(image_path)
             with io.BytesIO() as image_binary:
                 img.save(image_binary, 'PNG')
                 image_binary.seek(0)

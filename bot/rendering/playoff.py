@@ -32,6 +32,7 @@ from .StandingsMaker import (
     _build_match_rows,
     _match_signature,
     _get_cached_link,
+    _cache_rendered,
 )
 from . import asset_path
 
@@ -726,4 +727,6 @@ async def get_playoff(view: str = "full", season: int | None = None):
         img.save(fp=filename_copy, format="png")
         return 0, filename_copy, table_hash
 
-    return await asyncio.to_thread(_render_playoff_bracket, slot_map, filename)
+    result = await asyncio.to_thread(_render_playoff_bracket, slot_map, filename)
+    await _cache_rendered(table_hash, filename)
+    return result
