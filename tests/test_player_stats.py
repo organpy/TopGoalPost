@@ -192,8 +192,35 @@ async def test_champion_flag_and_unknown_player(db, world):
 
     stats = await PlayerStatsService().get_stats(world["alice"], 2)
     assert stats.champion is True
+    assert stats.season_champion_name == "Alice"
+    assert stats.championship_seasons == [2]
+    assert stats.circuits_won == 1
+
+    bob_stats = await PlayerStatsService().get_stats(world["bob"], 2)
+    assert bob_stats.champion is False
+    assert bob_stats.season_champion_name == "Alice"
+    assert bob_stats.championship_seasons == []
 
     assert await PlayerStatsService().get_stats(9999, 2) is None
+
+
+async def test_champion_is_derived_from_grand_final_when_column_is_empty(db, world):
+    async with db.get_session() as session:
+        playoff = await _event(session, 2, EventType.PLAYOFF)
+        alice = await session.get(Player, world["alice"])
+        bob = await session.get(Player, world["bob"])
+        await _match(session, playoff, alice, bob, 5, 2, slot="GF-M1", game=1)
+        await _match(session, playoff, alice, bob, 4, 3, slot="GF-M1", game=2)
+        await session.commit()
+
+    stats = await PlayerStatsService().get_stats(world["alice"], 2)
+    assert stats.champion is True
+    assert stats.season_champion_name == "Alice"
+    assert stats.championship_seasons == [2]
+
+    bob_stats = await PlayerStatsService().get_stats(world["bob"], 2)
+    assert bob_stats.champion is False
+    assert bob_stats.season_champion_name == "Alice"
 
 
 def test_stage_record_helpers():

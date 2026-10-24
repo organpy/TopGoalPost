@@ -703,6 +703,54 @@ def test_player_card_renders_every_state(tmp_path):
             assert img.size == (CARD_W, CARD_H)
 
 
+def test_player_card_champion_indicator_and_awards():
+    from bot.rendering.playercard import (
+        AWARDS_H,
+        AWARDS_TOP,
+        CARD_H,
+        TABLE_HEADER_H,
+        TABLE_ROW_H,
+        TABLE_TOP,
+        _awards_seasons,
+        _champion_line,
+    )
+    from bot.services.player_stats import PlayerStats
+
+    def stats(**kwargs):
+        return PlayerStats(
+            player_id=1,
+            name="organ",
+            country="US",
+            discord_id=1001,
+            season=3,
+            season_active=kwargs.pop("season_active", True),
+            registered=True,
+            **kwargs,
+        )
+
+    champion = stats(
+        champion=True,
+        season_champion_name="organ",
+        championship_seasons=[1, 3],
+    )
+    other = stats(season_champion_name="rival")
+    tbd = stats()
+    archived = stats(season_active=False)
+
+    assert _champion_line(champion)[0] == "SEASON CHAMPION"
+    assert _champion_line(other)[0] == "Champion: rival"
+    assert _champion_line(tbd)[0] == "Champion: TBD"
+    assert _champion_line(archived)[0] == "Champion: Not recorded"
+    assert _awards_seasons(champion) == "S1 · S3"
+    assert _awards_seasons(other) == "None yet"
+    assert champion.circuits_won == 2
+    assert other.circuits_won == 0
+
+    table_bottom = TABLE_TOP + TABLE_HEADER_H + TABLE_ROW_H * 4
+    assert AWARDS_TOP > table_bottom
+    assert AWARDS_TOP + AWARDS_H < CARD_H - 58
+
+
 async def test_open_renders_one_file_per_season(db, tmp_path, monkeypatch):
     """Archived seasons get their own filename and do not overwrite the live one."""
     from datetime import datetime

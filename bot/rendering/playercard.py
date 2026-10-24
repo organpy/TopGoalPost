@@ -15,7 +15,7 @@ from . import asset_path
 from .StandingsMaker import bg_color, get_flag, playoff_color, softgreen, softred
 
 CARD_W = 1000
-CARD_H = 600
+CARD_H = 700
 MARGIN = 40
 CONTENT_W = CARD_W - MARGIN * 2
 
@@ -31,6 +31,8 @@ TILE_GAP = 12
 TABLE_TOP = 304
 TABLE_HEADER_H = 36
 TABLE_ROW_H = 46
+AWARDS_TOP = 548
+AWARDS_H = 76
 
 # x-centre of each numeric column, matching the header labels.
 COLUMNS = (("GAMES", 300), ("W", 372), ("L", 436), ("GF", 500), ("GA", 564), ("GD", 628))
@@ -60,6 +62,24 @@ def _fit(text: str, max_width: int, size: int) -> str:
 def _signed(value: int) -> str:
     """+3 / -2 / 0 — a bare 0 reads better than +0."""
     return f"{value:+d}" if value else "0"
+
+
+def _champion_line(stats: PlayerStats) -> tuple[str, tuple[int, int, int]]:
+    """Text and colour for the season-champion indicator."""
+    if stats.champion:
+        return "SEASON CHAMPION", GOLD
+    if stats.season_champion_name:
+        return f"Champion: {stats.season_champion_name}", WHITE
+    if stats.season_active:
+        return "Champion: TBD", MUTED
+    return "Champion: Not recorded", MUTED
+
+
+def _awards_seasons(stats: PlayerStats) -> str:
+    """Compact list of seasons the player has won."""
+    if not stats.championship_seasons:
+        return "None yet"
+    return " · ".join(f"S{number}" for number in stats.championship_seasons)
 
 
 def _paste_avatar(img: Image.Image, discord_id: int, x: int, y: int, size: int) -> None:
@@ -114,14 +134,14 @@ def _draw_header(img: Image.Image, d: ImageDraw.ImageDraw, stats: PlayerStats) -
         fill=softgreen if stats.season_active else MUTED,
         anchor="ra",
     )
-    if stats.champion:
-        d.text(
-            (CARD_W - MARGIN, 118),
-            "CHAMPION",
-            font=_font(20),
-            fill=GOLD,
-            anchor="ra",
-        )
+    champion_text, champion_color = _champion_line(stats)
+    d.text(
+        (CARD_W - MARGIN, 118),
+        _fit(champion_text, 300, 20),
+        font=_font(20),
+        fill=champion_color,
+        anchor="ra",
+    )
 
 
 def _tiles(stats: PlayerStats) -> list[tuple[str, str, tuple[int, int, int], tuple[int, int, int]]]:
@@ -239,6 +259,52 @@ def _draw_stage_table(d: ImageDraw.ImageDraw, stats: PlayerStats) -> None:
             )
 
 
+def _draw_awards(d: ImageDraw.ImageDraw, stats: PlayerStats) -> None:
+    """Career awards strip below the stage table."""
+    top = AWARDS_TOP
+    right = CARD_W - MARGIN
+    d.rectangle((MARGIN, top, right, top + AWARDS_H), fill=PANEL, outline=RULE)
+    d.rectangle((MARGIN, top, MARGIN + 6, top + AWARDS_H), fill=GOLD)
+    d.text(
+        (MARGIN + 20, top + 8),
+        "CAREER AWARDS",
+        font=_font(18),
+        fill=MUTED,
+    )
+
+    count_x = MARGIN + 20
+    d.text(
+        (count_x, top + 28),
+        "PBL CIRCUITS WON",
+        font=_font(16),
+        fill=MUTED,
+    )
+    d.text(
+        (count_x, top + 40),
+        str(stats.circuits_won),
+        font=_font(30),
+        fill=GOLD if stats.circuits_won else MUTED,
+    )
+
+    divider_x = MARGIN + 210
+    d.line((divider_x, top + 26, divider_x, top + AWARDS_H - 10), fill=RULE)
+
+    seasons_x = divider_x + 20
+    d.text(
+        (seasons_x, top + 28),
+        "SEASONS WON",
+        font=_font(16),
+        fill=MUTED,
+    )
+    seasons_text = _awards_seasons(stats)
+    d.text(
+        (seasons_x, top + 42),
+        _fit(seasons_text, right - seasons_x - 16, 26),
+        font=_font(26),
+        fill=WHITE if stats.circuits_won else MUTED,
+    )
+
+
 def _draw_footer(d: ImageDraw.ImageDraw, stats: PlayerStats) -> None:
     y = CARD_H - 58
     d.line((MARGIN, y, CARD_W - MARGIN, y), fill=RULE)
@@ -264,6 +330,7 @@ def render_player_card(stats: PlayerStats, filename: str) -> str:
     _draw_header(img, d, stats)
     _draw_tiles(d, stats)
     _draw_stage_table(d, stats)
+    _draw_awards(d, stats)
     _draw_footer(d, stats)
     img.save(fp=filename, format="png")
     return filename

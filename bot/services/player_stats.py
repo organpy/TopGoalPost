@@ -28,6 +28,7 @@ from bot.db import (
     SeasonStatus,
     get_db_manager,
 )
+from bot.services.season_results import get_season_result
 
 
 class OpenState(str, Enum):
@@ -99,6 +100,12 @@ class PlayerStats:
     playin_rank: Optional[int] = None
     hp: Optional[int] = None
     champion: bool = False
+    season_champion_name: Optional[str] = None
+    championship_seasons: list[int] = field(default_factory=list)
+
+    @property
+    def circuits_won(self) -> int:
+        return len(self.championship_seasons)
 
     @property
     def total(self) -> StageRecord:
@@ -259,6 +266,16 @@ class PlayerStatsService:
                 player_id=player_id, season_number=season_number
             )
             matches = await self._completed_matches(session, player_id, season_number)
+            season_result = await get_season_result(session, season_number)
+
+            championship_seasons = []
+            season_numbers = (
+                await session.execute(select(Season.number).order_by(Season.number))
+            ).scalars()
+            for number in season_numbers:
+                result = await get_season_result(session, number)
+                if result.champion and result.champion.id == player.id:
+                    championship_seasons.append(number)
 
             stats = PlayerStats(
                 player_id=player.id,
@@ -271,7 +288,16 @@ class PlayerStatsService:
                 swiss_seed=player_season.swiss_seed if player_season else None,
                 playin_rank=player_season.playin_rank if player_season else None,
                 hp=player_season.hp if player_season else None,
-                champion=bool(season and season.champion_id == player.id),
+                champion=bool(
+                    season_result.champion
+                    and season_result.champion.id == player.id
+                ),
+                season_champion_name=(
+                    season_result.champion.name
+                    if season_result.champion
+                    else None
+                ),
+                championship_seasons=championship_seasons,
             )
             for match in matches:
                 record = getattr(stats, _STAGE_FIELD[match.event.type])
