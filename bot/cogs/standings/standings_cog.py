@@ -2,6 +2,7 @@
 
 import io
 import os
+import time
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -19,6 +20,7 @@ class StandingsCog(commands.Cog):
         self.bot = bot
         self.season_service = SeasonService()
         self.stats_service = PlayerStatsService()
+        self._bracket_cooldowns: dict[tuple[int, str], float] = {}
 
     async def _send_standings(
         self,
@@ -27,7 +29,20 @@ class StandingsCog(commands.Cog):
         view: str = "full",
         season: int = None,
     ):
-        await interaction.response.defer(ephemeral=True)
+        now = time.monotonic()
+        key = (interaction.user.id, phase)
+        last = self._bracket_cooldowns.get(key)
+        if last is not None and now - last < 5:
+            wait = 5 - (now - last)
+            msg = f"⏳ Try again in {wait:.1f}s."
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+            return
+        self._bracket_cooldowns[key] = now
+
+        await interaction.response.defer()
 
         season_num = season or await self.season_service.get_current_season_number()
         if not season_num:
@@ -60,7 +75,7 @@ class StandingsCog(commands.Cog):
             cached, filename, *extra = result
 
             if cached and cached.startswith(("http://", "https://")):
-                await interaction.followup.send(cached, ephemeral=True)
+                await interaction.followup.send(cached)
                 return
 
             image_path = cached or filename
@@ -79,7 +94,7 @@ class StandingsCog(commands.Cog):
                     fp=image_binary,
                     filename=f"{phase.lower()}_s{season_num}.png",
                 )
-                await interaction.followup.send(file=file, ephemeral=True)
+                await interaction.followup.send(file=file)
 
         except Exception as e:
             await interaction.followup.send(f"Failed: {e}", ephemeral=True)

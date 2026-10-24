@@ -18,6 +18,8 @@ except ImportError:
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from PIL import Image
+
 import pytest_asyncio
 
 from bot.cogs.tournament.tournament_cog import TournamentCog
@@ -25,6 +27,7 @@ from bot.cogs.signup.signup_cog import SignupCog
 from bot.cogs.admin.season_cog import SeasonAdminCog
 from bot.cogs.matches.match_cog import MatchCog
 from bot.cogs.standings.stats_cog import StatsCog
+from bot.cogs.standings.standings_cog import StandingsCog
 from bot.db import init_db_manager, get_db_manager, PlayerRepository
 from bot.db.repositories import PlayerSeasonRepository
 from bot.ui.dashboard import DashboardView
@@ -1447,6 +1450,38 @@ class TestMatchConfirmView:
         await view.on_timeout()
 
         assert all(child.disabled for child in view.children)
+
+class TestStandingsCog:
+    async def test_bracket_reply_is_public_and_cooldown_blocks_second_call(
+        self, mock_interaction, mock_bot, tmp_path, monkeypatch
+    ):
+        target = tmp_path / "open.png"
+        Image.new("RGBA", (8, 8), (0, 0, 0, 255)).save(target)
+        render = AsyncMock(return_value=(0, str(target), "hash"))
+        monkeypatch.setattr(
+            "bot.cogs.standings.standings_cog.StandingsMaker.get_open",
+            render,
+        )
+
+        cog = StandingsCog(mock_bot)
+        cog.season_service.get_current_season_number = AsyncMock(return_value=1)
+        mock_interaction.response.is_done = MagicMock(return_value=False)
+
+        await cog._send_standings(mock_interaction, "OPEN")
+
+        assert render.await_count == 1
+        sent = mock_interaction.followup.send.await_args
+        assert "file" in sent.kwargs
+        assert "ephemeral" not in sent.kwargs
+
+        mock_interaction.response.is_done = MagicMock(return_value=True)
+        await cog._send_standings(mock_interaction, "OPEN")
+
+        assert render.await_count == 1
+        blocked = mock_interaction.followup.send.await_args
+        assert "Try again" in blocked.args[0]
+        assert blocked.kwargs["ephemeral"] is True
+
 
 class TestConfirmActionView:
     @staticmethod
