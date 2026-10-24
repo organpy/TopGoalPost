@@ -13,6 +13,7 @@ from bot.services.match import MatchService
 from bot.services.signup import SignupService
 from bot.services.tournament_flow import TournamentFlowService
 from bot.db import get_db_manager, MatchRepository, PlayerRepository, EventType, EventRepository
+from bot.ui.autocomplete import player_list_autocomplete
 
 
 STAGE_EVENT_TYPES = {
@@ -589,6 +590,7 @@ class TournamentCog(commands.Cog):
         description="Set players who skip Open and enter Swiss seeded (comma-separated)",
     )
     @app_commands.describe(players="Names, Discord IDs, or mentions separated by commas; leave empty to clear")
+    @app_commands.autocomplete(players=player_list_autocomplete)
     @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_skip_open(

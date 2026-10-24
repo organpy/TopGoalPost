@@ -208,25 +208,42 @@ class PlayerStatsService:
     async def resolve_player(
         self, username: str, season_number: int
     ) -> Optional[Player]:
-        """Find a player by name, preferring that season's roster.
+        """Find a player by name or ID, preferring that season's roster.
 
+        Numeric input is tried as an internal player ID, then as a Discord ID.
         Names are global, so two seasons can hold different players with the
-        same name. Looking inside the requested season first keeps archived
+        same name; looking inside the requested season first keeps archived
         stats pointed at the right person.
         """
+        token = (username or "").strip()
         async with self.db.get_session() as session:
+            if token.isdigit():
+                number = int(token)
+                player = await session.get(Player, number)
+                if player is None:
+                    player = await PlayerRepository(session).get_by_discord_id(
+                        number
+                    )
+                if player is not None:
+                    return player
+
             stmt = (
                 select(Player)
                 .join(PlayerSeason, PlayerSeason.player_id == Player.id)
                 .where(
                     PlayerSeason.season_number == season_number,
-                    func.lower(Player.name) == username.lower(),
+                    func.lower(Player.name) == token.lower(),
                 )
                 .limit(1)
             )
             player = (await session.execute(stmt)).scalars().first()
             if player is None:
-                player = await PlayerRepository(session).get_by_name(username)
+                stmt = (
+                    select(Player)
+                    .where(func.lower(Player.name) == token.lower())
+                    .limit(1)
+                )
+                player = (await session.execute(stmt)).scalars().first()
             return player
 
     async def get_stats(

@@ -668,6 +668,16 @@ class TestPairingService:
         )
         assert len(by_player) == 105
 
+        by_internal_id = await svc.list_incomplete_matches(
+            include_completed=True, player=str(players[0].id)
+        )
+        assert len(by_internal_id) == 105
+
+        by_discord_id = await svc.list_incomplete_matches(
+            include_completed=True, player=str(players[0].discord_id)
+        )
+        assert len(by_discord_id) == 105
+
         by_stage = await svc.list_incomplete_matches(
             include_completed=True, stage="OPEN", round_num=1
         )

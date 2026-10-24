@@ -346,13 +346,15 @@ not rename the Discord nickname.
 | `/open`, `/playins`, `/swiss` | Standings images (`season:N` for a past season) |
 | `/playoff view:full\|winners\|losers` | Full bracket or one branch (`season:N` for a past season) |
 | `/seasons` | List seasons with status, champion and end date |
-| `/profile username:User [season:N]` | Season stats: games, wins, goals, GD, per-stage records |
-| `/playercard username:User [season:N]` | Rendered player card image (games, wins, goals, stage table) |
-| `/history username:User [season:N]` | Recent match results |
+| `/profile username:Name-or-ID [season:N]` | Season stats: games, wins, goals, GD, per-stage records |
+| `/playercard username:Name-or-ID [season:N]` | Rendered player card image (games, wins, goals, stage table) |
+| `/history username:Name-or-ID [season:N]` | Recent match results |
 
 `season:` defaults to the current season and autocompletes every season that
-still has data. Stats are computed from completed matches, so a player who did
-not play Open shows `Did not play` and a seeded returner shows
+still has data. Player name fields autocomplete from the local roster as you
+type (including an empty field) and also accept internal player IDs or Discord
+IDs. Stats are computed from completed matches, so a player who did not play
+Open shows `Did not play` and a seeded returner shows
 `Skipped Open (seed #N)` — never `0-0`.
 
 All of these reply ephemerally, including the standings images.

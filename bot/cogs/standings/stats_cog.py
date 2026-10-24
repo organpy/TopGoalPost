@@ -10,7 +10,6 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import Button, View
-from sqlalchemy import select
 
 from bot.rendering import asset_path
 from bot.rendering.playercard import render_player_card
@@ -18,8 +17,7 @@ from bot.services.match import MatchService
 from bot.services.player_stats import PlayerStats, PlayerStatsService
 from bot.services.season import SeasonService
 from bot.db import get_db_manager, PlayerRepository
-from bot.db.models import Player as DbPlayer
-from bot.ui.autocomplete import season_autocomplete
+from bot.ui.autocomplete import season_autocomplete, username_autocomplete
 
 CHAMPION_COLOR = discord.Color.from_rgb(245, 196, 70)
 
@@ -68,17 +66,6 @@ class StatsCog(commands.Cog):
         self.stats_service = PlayerStatsService()
 
     # ── resolution ────────────────────────────────────────────
-
-    async def username_autocomplete(
-        self, interaction: discord.Interaction, current: str
-    ) -> list[app_commands.Choice[str]]:
-        if not current:
-            return []
-        async with self.db.get_session() as session:
-            stmt = select(DbPlayer).where(DbPlayer.name.ilike(f"%{current}%")).limit(25)
-            result = await session.execute(stmt)
-            players = result.scalars().all()
-            return [app_commands.Choice(name=p.name, value=p.name) for p in players]
 
     async def _resolve(self, interaction, username, season):
         """Return (player, season_number), or None after explaining why not."""
@@ -197,7 +184,7 @@ class StatsCog(commands.Cog):
 
     @app_commands.command(name="profile", description="View a player's season stats")
     @app_commands.describe(
-        username="Player's registered name (leave blank for yourself)",
+        username="Player's registered name or ID (leave blank for yourself)",
         season="Season number (defaults to the current one)",
     )
     @app_commands.autocomplete(
@@ -217,7 +204,7 @@ class StatsCog(commands.Cog):
 
     @app_commands.command(name="playercard", description="Render a player card image")
     @app_commands.describe(
-        username="Player's registered name (leave blank for yourself)",
+        username="Player's registered name or ID (leave blank for yourself)",
         season="Season number (defaults to the current one)",
     )
     @app_commands.autocomplete(
@@ -250,7 +237,7 @@ class StatsCog(commands.Cog):
 
     @app_commands.command(name="history", description="View a player's match history")
     @app_commands.describe(
-        username="Player's registered name (leave blank for yourself)",
+        username="Player's registered name or ID (leave blank for yourself)",
         season="Season number (defaults to the current one)",
     )
     @app_commands.autocomplete(

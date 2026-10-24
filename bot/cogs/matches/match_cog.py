@@ -10,6 +10,7 @@ from discord import app_commands
 
 from bot.services.match import MatchService
 from bot.db import get_db_manager, MatchPlayerRepository, PlayerRepository
+from bot.ui.autocomplete import username_autocomplete
 from bot.ui.report import ReportScoreView
 
 
@@ -212,6 +213,7 @@ class MatchCog(commands.Cog):
         player="Filter by player name or ID",
         page="Page number (20 matches per page)",
     )
+    @app_commands.autocomplete(player=username_autocomplete)
     @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def list_matches_cmd(

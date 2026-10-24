@@ -230,3 +230,17 @@ async def test_resolve_player_prefers_the_season_roster(db):
     svc = PlayerStatsService()
     assert (await svc.resolve_player("alex", 1)).id == old_id
     assert (await svc.resolve_player("Alex", 2)).id == new_id
+
+
+async def test_resolve_player_by_internal_and_discord_id(db):
+    async with db.get_session() as session:
+        session.add(Season(number=1))
+        await session.flush()
+        player = Player(discord_id=4242, name="Ida")
+        session.add(player)
+        await session.commit()
+        player_id = player.id
+
+    svc = PlayerStatsService()
+    assert (await svc.resolve_player(str(player_id), 1)).id == player_id
+    assert (await svc.resolve_player("4242", 1)).id == player_id

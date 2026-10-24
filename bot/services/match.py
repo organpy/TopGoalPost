@@ -11,6 +11,7 @@ from bot.db import (
     get_db_manager,
     Match,
     MatchPlayer,
+    Player,
     PlayerSeason,
     EventType,
     MatchRepository,
@@ -1052,9 +1053,22 @@ class MatchService:
             include_completed = False
 
         stage_key = (stage or "").upper()
-        player_key = (player or "").lower()
+        player_key = (player or "").strip()
 
         async with self.db.get_session() as session:
+            player_id = None
+            if player_key.isdigit():
+                number = int(player_key)
+                found = await session.get(Player, number)
+                if found is None:
+                    found = (
+                        await session.execute(
+                            select(Player).where(Player.discord_id == number)
+                        )
+                    ).scalars().first()
+                if found is not None:
+                    player_id = found.id
+
             stmt = (
                 select(Match)
                 .options(
@@ -1091,7 +1105,12 @@ class MatchService:
                 label = self._format_match_label(match, mps)
                 if match.completed_at:
                     label += " [completed — edit]"
-                if player_key and player_key not in label.lower():
+                if player_id is not None:
+                    if not any(
+                        mp.player_id == player_id for mp in match.match_players
+                    ):
+                        continue
+                elif player_key and player_key.lower() not in label.lower():
                     continue
                 out.append({"match_id": match.id, "label": label})
 
