@@ -34,11 +34,11 @@ rendered standings images and Discord-thread scheduling.
 
 ---
 
-<h2 id="quick-start"><img src="repopng/TPGstart.png" alt="Quick start" width="520"></h2>
+<h2 id="quick-start"><img src="repopng/TPGstart.png" alt="Quick start" width="250"></h2>
 
 From clone to running bot:
 
-<h3><img src="repopng/TPGinstallation.png" alt="Installation" width="420"></h3>
+<h3><img src="repopng/TPGinstallation.png" alt="Installation" width="200"></h3>
 
 ```bash
 git clone https://github.com/organpy/srtrt.git
@@ -53,7 +53,7 @@ python main.py
 The bot logs to stdout. It syncs slash commands to the guild in `SERVER_ID` on
 startup and clears global duplicates.
 
-<h3><img src="repopng/TPGenvvar.png" alt="Environment variables" width="420"></h3>
+<h3><img src="repopng/TPGenvvar.png" alt="Environment variables" width="200"></h3>
 
 | Key | Required | Notes |
 |-----|----------|-------|
@@ -64,7 +64,7 @@ startup and clears global duplicates.
 
 ---
 
-<h2 id="season-lifecycle"><img src="repopng/TPGlifecycle.png" alt="Season lifecycle" width="520"></h2>
+<h2 id="season-lifecycle"><img src="repopng/TPGlifecycle.png" alt="Season lifecycle" width="250"></h2>
 
 ```
 OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → (season ends)
@@ -292,7 +292,7 @@ the reset card if one is played.
 
 ---
 
-<h2 id="commands"><img src="repopng/TPGcmds.png" alt="Commands" width="520"></h2>
+<h2 id="commands"><img src="repopng/TPGcmds.png" alt="Commands" width="250"></h2>
 
 ### `!season` (admin — prefix)
 
@@ -445,7 +445,7 @@ Grant host roles:
 
 ---
 
-<h2 id="configuration"><img src="repopng/TPGconfig.png" alt="Configuration" width="520"></h2>
+<h2 id="configuration"><img src="repopng/TPGconfig.png" alt="Configuration" width="250"></h2>
 
 All config lives in the `settings` DB table (flat key–value). Set via
 `!set_config key value` and remove via `!remove_config key`.
@@ -466,7 +466,7 @@ All config lives in the `settings` DB table (flat key–value). Set via
 
 ---
 
-<h2 id="season-archive"><img src="repopng/TPGarchive.png" alt="Season archive" width="520"></h2>
+<h2 id="season-archive"><img src="repopng/TPGarchive.png" alt="Season archive" width="250"></h2>
 
 Ending a season never deletes it. `!season create N`:
 
@@ -562,7 +562,7 @@ Migrations live in `migrations/versions/`.
 
 ---
 
-<h2 id="troubleshooting"><img src="repopng/TPGtroubleshooting.png" alt="Troubleshooting" width="520"></h2>
+<h2 id="troubleshooting"><img src="repopng/TPGtroubleshooting.png" alt="Troubleshooting" width="250"></h2>
 
 **Bot doesn't start**
 - Check `DISCORD_TOKEN` and `SERVER_ID` in `.env`
