@@ -223,6 +223,21 @@ async def test_champion_is_derived_from_grand_final_when_column_is_empty(db, wor
     assert bob_stats.season_champion_name == "Alice"
 
 
+async def test_season_overview_derives_champion_from_grand_final(db, world):
+    async with db.get_session() as session:
+        playoff = await _event(session, 2, EventType.PLAYOFF)
+        alice = await session.get(Player, world["alice"])
+        bob = await session.get(Player, world["bob"])
+        await _match(session, playoff, alice, bob, 5, 2, slot="GF-M1", game=1)
+        await _match(session, playoff, alice, bob, 4, 3, slot="GF-M1", game=2)
+        await session.commit()
+
+    overview = await PlayerStatsService().season_overview()
+
+    assert overview[0].number == 2
+    assert overview[0].champion == "Alice"
+
+
 def test_stage_record_helpers():
     record = StageRecord()
     assert not record.played

@@ -202,15 +202,19 @@ class PlayerStatsService:
                 .order_by(Season.number.desc())
             )
             seasons = (await session.execute(stmt)).scalars().unique().all()
-            return [
-                SeasonInfo(
-                    number=season.number,
-                    active=season.status == SeasonStatus.ACTIVE,
-                    champion=season.champion.name if season.champion else None,
-                    ended_at=season.ended_at,
+            overview = []
+            for season in seasons:
+                result = await get_season_result(session, season.number)
+                champion = result.champion or season.champion
+                overview.append(
+                    SeasonInfo(
+                        number=season.number,
+                        active=season.status == SeasonStatus.ACTIVE,
+                        champion=champion.name if champion else None,
+                        ended_at=season.ended_at,
+                    )
                 )
-                for season in seasons
-            ]
+            return overview
 
     async def resolve_player(
         self, username: str, season_number: int

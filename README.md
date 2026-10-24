@@ -138,8 +138,9 @@ Match 361 · Playoff W-R1-M3 · organ 5-0 dummy · Series 1-0 · G1 5-0, G2 3-2
 ```
 
 User-facing slash commands (`/signup`, `/profile`, `/playercard`, `/history`,
-`/open`, `/playins`, `/swiss`, `/playoff`, `/check_times`, `/set_timezone`,
-`/forfeit`, `/editname`, …) all reply ephemerally, so the channel stays clean.
+`/open`, `/playins`, `/swiss`, `/playoff`, `/season_summary`, `/check_times`,
+`/set_timezone`, `/forfeit`, `/editname`, …) all reply ephemerally, so the
+channel stays clean.
 
 `/set_score` can edit a completed match. The autocomplete searches every
 match in the season, including completed ones, shows the score, and marks
@@ -347,7 +348,8 @@ not rename the Discord nickname.
 | `/playoff view:full\|winners\|losers` | Full bracket or one branch (`season:N` for a past season) |
 | `/seasons` | List seasons with status, champion and end date |
 | `/profile username:Name-or-ID [season:N]` | Season stats: games, wins, goals, GD, per-stage records |
-| `/playercard username:Name-or-ID [season:N]` | Rendered player card image (games, wins, goals, stage table) |
+| `/playercard username:Name-or-ID [season:N]` | Rendered player card image (record, stage table, champion, career awards) |
+| `/season_summary [season:N]` | Rendered season recap: placements, top scorer, most conceded, games and win leaders |
 | `/history username:Name-or-ID [season:N]` | Recent match results |
 
 `season:` defaults to the current season and autocompletes every season that
@@ -463,6 +465,7 @@ overwrite the live one. `/seasons` lists what is available:
 /seasons
 /open season:2
 /profile username:Alice season:2
+/season_summary season:2
 ```
 
 Global user preferences (timezones, timeslots, settings) survive across

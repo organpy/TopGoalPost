@@ -597,6 +597,86 @@ class TestStatsCog:
         assert "Skipped Open" not in fields["Open"]
         assert "8" in fields["Totals"]
 
+    async def test_season_summary_command_renders_image(
+        self, mock_interaction, mock_bot, tmp_path
+    ):
+        from bot.db.models import Event, EventStatus, EventType, Match, MatchPlayer
+
+        async with get_db_manager().get_session() as session:
+            await self._seed_season(session)
+            alice = await PlayerRepository(session).create(
+                discord_id=101, name="Alice"
+            )
+            bob = await PlayerRepository(session).create(
+                discord_id=102, name="Bob"
+            )
+            event = Event(
+                name="Open",
+                type=EventType.OPEN,
+                season=1,
+                status=EventStatus.COMPLETED,
+            )
+            session.add(event)
+            await session.flush()
+            match = Match(event_id=event.id, completed_at=datetime.utcnow())
+            session.add(match)
+            await session.flush()
+            session.add_all([
+                MatchPlayer(
+                    match_id=match.id,
+                    side=0,
+                    player_id=alice.id,
+                    goals=5,
+                    is_winner=True,
+                ),
+                MatchPlayer(
+                    match_id=match.id,
+                    side=1,
+                    player_id=bob.id,
+                    goals=2,
+                    is_winner=False,
+                ),
+            ])
+            await session.commit()
+
+        cog = StatsCog(mock_bot)
+        cog.season_service.get_current_season_number = AsyncMock(return_value=1)
+        output = tmp_path / "season_summary.png"
+
+        def fake_render(_summary, filename):
+            Image.new("RGB", (20, 20)).save(filename)
+            return filename
+
+        with patch(
+            "bot.cogs.standings.stats_cog.asset_path",
+            return_value=str(output),
+        ), patch(
+            "bot.cogs.standings.stats_cog.render_season_summary",
+            side_effect=fake_render,
+        ):
+            await cog.season_summary_cmd.callback(cog, mock_interaction, 1)
+
+        mock_interaction.followup.send.assert_awaited()
+        kwargs = mock_interaction.followup.send.call_args.kwargs
+        assert kwargs["ephemeral"] is True
+        assert "file" in kwargs
+        assert output.exists()
+
+    async def test_season_summary_command_rejects_empty_season(
+        self, mock_interaction, mock_bot
+    ):
+        async with get_db_manager().get_session() as session:
+            await self._seed_season(session)
+            await session.commit()
+
+        cog = StatsCog(mock_bot)
+        cog.season_service.get_current_season_number = AsyncMock(return_value=1)
+        await cog.season_summary_cmd.callback(cog, mock_interaction, 1)
+
+        message = mock_interaction.followup.send.call_args[0][0]
+        assert "No completed matches" in message
+        assert mock_interaction.followup.send.call_args.kwargs["ephemeral"] is True
+
 
 class TestDashboardView:
     """Dashboard buttons must call cog methods, not app_commands.Command objects."""

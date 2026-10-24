@@ -13,9 +13,11 @@ from discord.ui import Button, View
 
 from bot.rendering import asset_path
 from bot.rendering.playercard import render_player_card
+from bot.rendering.seasonsummary import render_season_summary
 from bot.services.match import MatchService
 from bot.services.player_stats import PlayerStats, PlayerStatsService
 from bot.services.season import SeasonService
+from bot.services.season_summary import SeasonSummaryService
 from bot.db import get_db_manager, PlayerRepository
 from bot.ui.autocomplete import season_autocomplete, username_autocomplete
 
@@ -64,6 +66,7 @@ class StatsCog(commands.Cog):
         self.season_service = SeasonService()
         self.match_service = MatchService()
         self.stats_service = PlayerStatsService()
+        self.summary_service = SeasonSummaryService()
 
     # ── resolution ────────────────────────────────────────────
 
@@ -235,6 +238,56 @@ class StatsCog(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(
+        name="season_summary",
+        description="Render a season summary image with placements and leaders",
+    )
+    @app_commands.describe(
+        season="Season number (defaults to the current one)",
+    )
+    @app_commands.autocomplete(season=season_autocomplete)
+    async def season_summary_cmd(
+        self,
+        interaction: discord.Interaction,
+        season: int = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        season_num = season or await self.season_service.get_current_season_number()
+        if not season_num:
+            await interaction.followup.send(
+                "No active season. Create one with `!season create N`.",
+                ephemeral=True,
+            )
+            return
+
+        summary = await self.summary_service.get_summary(season_num)
+        if not summary.has_data:
+            await interaction.followup.send(
+                f"No completed matches in Season {season_num} yet.",
+                ephemeral=True,
+            )
+            return
+
+        filename = asset_path(
+            "tables", f"season_summary_s{season_num}.png"
+        )
+        try:
+            await asyncio.to_thread(
+                render_season_summary, summary, filename
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            await interaction.followup.send(
+                f"Failed to render season summary: {exc}", ephemeral=True
+            )
+            return
+
+        await interaction.followup.send(
+            file=discord.File(
+                filename, filename=f"season_summary_s{season_num}.png"
+            ),
+            ephemeral=True,
+        )
+
     @app_commands.command(name="history", description="View a player's match history")
     @app_commands.describe(
         username="Player's registered name or ID (leave blank for yourself)",
@@ -307,7 +360,8 @@ class StatsCog(commands.Cog):
             color=discord.Color.blurple(),
         )
         embed.set_footer(
-            text="Add season:N to /open, /swiss, /playoff, /profile or /playercard"
+            text="Use /season_summary for the full picture · "
+            "Add season:N to /open, /swiss, /playoff, /profile or /playercard"
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 

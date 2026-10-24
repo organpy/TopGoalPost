@@ -751,6 +751,76 @@ def test_player_card_champion_indicator_and_awards():
     assert AWARDS_TOP + AWARDS_H < CARD_H - 58
 
 
+def test_season_summary_renders_podium_and_leaders(tmp_path):
+    from bot.rendering.seasonsummary import (
+        SUMMARY_H,
+        SUMMARY_W,
+        render_season_summary,
+    )
+    from bot.services.season_summary import (
+        SeasonAward,
+        SeasonSummary,
+        SummaryPlayer,
+    )
+
+    champion = SummaryPlayer(
+        player_id=1,
+        name="organ",
+        discord_id=1001,
+        country="US",
+        games=4,
+        wins=4,
+        goals_for=18,
+        goals_against=8,
+    )
+    runner_up = SummaryPlayer(
+        player_id=2,
+        name="rival",
+        discord_id=1002,
+        country="BR",
+        games=5,
+        wins=2,
+        losses=3,
+        goals_for=15,
+        goals_against=16,
+    )
+    awards = [
+        SeasonAward("top_scorer", "TOP SCORER", champion, "18", "4 games played"),
+        SeasonAward("most_conceded", "MOST CONCEDED", runner_up, "16", "5 games played"),
+        SeasonAward("most_games", "MOST GAMES", runner_up, "5", "2-3 record"),
+        SeasonAward("most_wins", "MOST WINS", champion, "4", "4 games played"),
+        SeasonAward("best_diff", "BEST GOAL DIFF", champion, "+10", "18 scored · 8 conceded"),
+        SeasonAward("best_rate", "BEST WIN RATE", champion, "100%", "4-0 record"),
+    ]
+    summary = SeasonSummary(
+        season=1,
+        active=False,
+        matches=6,
+        players=4,
+        goals=37,
+        champion=champion,
+        runner_up=runner_up,
+        awards=awards,
+    )
+    path = render_season_summary(summary, str(tmp_path / "summary.png"))
+
+    with Image.open(path) as img:
+        assert img.size == (SUMMARY_W, SUMMARY_H)
+
+    empty = SeasonSummary(
+        season=2,
+        active=True,
+        matches=0,
+        players=0,
+        goals=0,
+    )
+    empty_path = render_season_summary(
+        empty, str(tmp_path / "summary_empty.png")
+    )
+    with Image.open(empty_path) as img:
+        assert img.size == (SUMMARY_W, SUMMARY_H)
+
+
 async def test_open_renders_one_file_per_season(db, tmp_path, monkeypatch):
     """Archived seasons get their own filename and do not overwrite the live one."""
     from datetime import datetime
