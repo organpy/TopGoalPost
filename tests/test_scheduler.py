@@ -295,5 +295,14 @@ class TestAutocomplete:
         target_days = await day_autocomplete(interaction, "")
         caller_days = await day_autocomplete(self._interaction(1), "")
         assert len(target_days) == 14
-        # The two zones are 14h apart, so the day lists differ.
-        assert [c.value for c in target_days] != [c.value for c in caller_days]
+
+        # Each list starts on "today" in that user's timezone. Comparing the
+        # literal lists is time-of-day dependent (the two dates match for part
+        # of the day), so assert against each zone's actual date instead.
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        assert target_days[0].value == str(
+            datetime.now(ZoneInfo("Pacific/Kiritimati")).day
+        )
+        assert caller_days[0].value == str(datetime.now(ZoneInfo("UTC")).day)
