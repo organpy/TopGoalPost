@@ -206,11 +206,15 @@ def _playoff_placeholder_x(left: float) -> float:
     return left + PLAYOFF_PLAYER_W / 2
 
 
-def _champion_banner_rect() -> tuple[float, float, float, float]:
+def _champion_banner_rect(
+    right: float | None = None,
+) -> tuple[float, float, float, float]:
     """Top-right champion banner, above the grand-final column."""
-    left = PLAYOFF_MARGIN + (PLAYOFF_COLS - 1) * PLAYOFF_COL_STEP
+    right = right if right is not None else PLAYOFF_LAYOUT_W - PLAYOFF_MARGIN
+    left = right - (
+        PLAYOFF_BOX_W + (PLAYOFF_RIGHT_MARGIN - PLAYOFF_MARGIN)
+    )
     top = PLAYOFF_MARGIN
-    right = PLAYOFF_LAYOUT_W - PLAYOFF_MARGIN
     return left, top, right, top + 92
 
 
@@ -218,9 +222,10 @@ def _draw_champion_banner(
     img: Image.Image,
     d: ImageDraw.ImageDraw,
     champion: tuple[int, str, str | None],
+    right: float | None = None,
 ) -> None:
     champion_id, name, country = champion
-    left, top, right, _bottom = _champion_banner_rect()
+    left, top, right, _bottom = _champion_banner_rect(right)
     d.rounded_rectangle(
         (left, top, right, top + 92),
         radius=10,
@@ -320,6 +325,7 @@ def _make_po_box(
     row_by_id: dict[int, list] | None = None,
     champion_id: int | None = None,
     champion_slot: str | None = None,
+    hide_p2_placeholder: bool = False,
 ):
     """Draw a playoff bracket box with BO3 score columns per player row."""
     row_by_id = row_by_id or {}
@@ -475,7 +481,7 @@ def _make_po_box(
             )
         except Exception:
             pass
-    else:
+    elif not hide_p2_placeholder:
         font = _playoff_placeholder_font(p2_label)
         d.text(
             xy=(
@@ -514,17 +520,26 @@ def _make_po_box(
         )
 
 
-def _connector_source_y(src_slot: str) -> float:
+def _connector_source_y(
+    src_slot: str,
+    positions: dict[str, tuple[int, int]] | None = None,
+) -> float:
     """Always leave a card from its center, even before a winner is known."""
-    return PLAYOFF_SLOT_POS[src_slot][1] + PLAYOFF_BOX_H / 2
+    positions = positions or PLAYOFF_SLOT_POS
+    return positions[src_slot][1] + PLAYOFF_BOX_H / 2
 
 
 def _connector_points(
-    src_slot: str, src_y: float, tgt_slot: str, tgt_y: float
+    src_slot: str,
+    src_y: float,
+    tgt_slot: str,
+    tgt_y: float,
+    positions: dict[str, tuple[int, int]] | None = None,
 ) -> list[tuple[float, float]]:
     """Route an orthogonal connector in the gaps between rounds."""
-    src_col, _src_top = PLAYOFF_SLOT_POS[src_slot]
-    tgt_col, _tgt_top = PLAYOFF_SLOT_POS[tgt_slot]
+    positions = positions or PLAYOFF_SLOT_POS
+    src_col, _src_top = positions[src_slot]
+    tgt_col, _tgt_top = positions[tgt_slot]
     src_left = PLAYOFF_MARGIN + src_col * PLAYOFF_COL_STEP
     tgt_left = PLAYOFF_MARGIN + tgt_col * PLAYOFF_COL_STEP
     src_right = src_left + PLAYOFF_BOX_W
@@ -571,42 +586,132 @@ def _draw_connector(
     src: str,
     side: int | None,
     tgt: str,
+    positions: dict[str, tuple[int, int]] | None = None,
 ) -> None:
-    src_y = _connector_source_y(src)
-    tgt_top = PLAYOFF_SLOT_POS[tgt][1]
+    positions = positions or PLAYOFF_SLOT_POS
+    src_y = _connector_source_y(src, positions)
+    tgt_top = positions[tgt][1]
     if side is None:
         tgt_y = tgt_top + PLAYOFF_BOX_H / 2
     else:
         tgt_y = tgt_top + side * PLAYOFF_ROW_H + PLAYOFF_ROW_H / 2
 
-    points = _connector_points(src, src_y, tgt, tgt_y)
+    points = _connector_points(src, src_y, tgt, tgt_y, positions)
     d.line(points, fill=PLAYOFF_CONNECTOR, width=2)
+
+
+def _winners_positions() -> dict[str, tuple[int, int]]:
+    """Compact winners view: grand final and reset sit beside W R4."""
+    positions = dict(PLAYOFF_SLOT_POS)
+    gf_col, gf_top = positions["W-R4-M1"]
+    positions["GF-M1"] = (gf_col + 1, gf_top)
+    positions["GF-M2"] = (gf_col + 1, gf_top + PLAYOFF_GF_STEP)
+    return positions
+
+
+def _losers_feed_geometry(
+    positions: dict[str, tuple[int, int]], bottom_y: float
+) -> tuple[float, float, float]:
+    """Vertical feed into the second GF row, from empty space below."""
+    gf_col, gf_top = positions["GF-M1"]
+    gf_left = PLAYOFF_MARGIN + gf_col * PLAYOFF_COL_STEP
+    feed_x = gf_left - PLAYOFF_COL_GAP / 4
+    row_y = gf_top + PLAYOFF_ROW_H * 1.5
+    return feed_x, row_y, bottom_y
+
+
+def _draw_losers_feed_line(
+    d: ImageDraw.ImageDraw,
+    positions: dict[str, tuple[int, int]],
+    bottom_y: float,
+) -> None:
+    feed_x, row_y, _ = _losers_feed_geometry(positions, bottom_y)
+    gf_left = PLAYOFF_MARGIN + positions["GF-M1"][0] * PLAYOFF_COL_STEP
+    d.line(
+        [(feed_x, bottom_y), (feed_x, row_y), (gf_left, row_y)],
+        fill=PLAYOFF_CONNECTOR,
+        width=2,
+    )
+
+
+def _draw_vertical_label(
+    img: Image.Image,
+    text: str,
+    center_x: float,
+    center_y: float,
+    font,
+    fill,
+) -> None:
+    bbox = font.getbbox(text)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    label = Image.new(
+        "RGBA", (text_w + 8, text_h + 8), (*bg_color, 255)
+    )
+    label_draw = ImageDraw.Draw(label)
+    label_draw.text(
+        (4 - bbox[0], 4 - bbox[1]),
+        text,
+        font=font,
+        fill=fill,
+    )
+    rotated = label.rotate(90, expand=True)
+    img.paste(
+        rotated,
+        (
+            int(center_x - rotated.width / 2),
+            int(center_y - rotated.height / 2),
+        ),
+    )
+
+
+def _draw_losers_feed_label(
+    img: Image.Image,
+    positions: dict[str, tuple[int, int]],
+    bottom_y: float,
+) -> None:
+    feed_x, row_y, _ = _losers_feed_geometry(positions, bottom_y)
+    _draw_vertical_label(
+        img,
+        "Winner of Losers Bracket",
+        feed_x,
+        (bottom_y + row_y) / 2,
+        PLAYOFF_LABEL_FONT,
+        PLAYOFF_LABEL_COLOR,
+    )
 
 
 def _draw_connectors(
     d: ImageDraw.ImageDraw,
     allowed_slots: set[str] | None = None,
+    positions: dict[str, tuple[int, int]] | None = None,
 ) -> None:
+    positions = positions or PLAYOFF_SLOT_POS
     for tgt, sources in ADVANCEMENT_REVERSE_MAP.items():
-        if tgt not in PLAYOFF_SLOT_POS:
+        if tgt not in positions:
             continue
         if allowed_slots is not None and tgt not in allowed_slots:
             continue
         for src, _outcome, side in sources:
-            if src in PLAYOFF_SLOT_POS and (
+            if src in positions and (
                 allowed_slots is None or src in allowed_slots
             ):
-                _draw_connector(d, src, side, tgt)
+                _draw_connector(d, src, side, tgt, positions)
 
     # The reset is created dynamically, so it is not in the static reverse map.
     if allowed_slots is None or "GF-M1" in allowed_slots:
-        _draw_connector(d, "GF-M1", None, "GF-M2")
+        _draw_connector(d, "GF-M1", None, "GF-M2", positions)
 
 
-def _column_label_top(prefix: str, col: int) -> float | None:
+def _column_label_top(
+    prefix: str,
+    col: int,
+    positions: dict[str, tuple[int, int]] | None = None,
+) -> float | None:
+    positions = positions or PLAYOFF_SLOT_POS
     tops = [
         top
-        for slot, (slot_col, top) in PLAYOFF_SLOT_POS.items()
+        for slot, (slot_col, top) in positions.items()
         if slot.startswith(prefix) and slot_col == col
     ]
     return min(tops) if tops else None
@@ -618,11 +723,15 @@ def _draw_labels(
     allowed_slots: set[str] | None = None,
     show_grand_final: bool = True,
     champion: tuple[int, str, str | None] | None = None,
+    positions: dict[str, tuple[int, int]] | None = None,
+    champion_right: float | None = None,
 ) -> None:
+    positions = positions or PLAYOFF_SLOT_POS
+
     def allowed(slot: str) -> bool:
         return allowed_slots is None or slot in allowed_slots
 
-    if any(allowed(slot) for slot in PLAYOFF_SLOT_POS if slot.startswith("W-")):
+    if any(allowed(slot) for slot in positions if slot.startswith("W-")):
         d.text(
             xy=(PLAYOFF_MARGIN, PLAYOFF_MARGIN + 4),
             text="WINNERS BRACKET",
@@ -630,7 +739,7 @@ def _draw_labels(
             font=PLAYOFF_LABEL_FONT,
             anchor="lm",
         )
-    if any(allowed(slot) for slot in PLAYOFF_SLOT_POS if slot.startswith("L-")):
+    if any(allowed(slot) for slot in positions if slot.startswith("L-")):
         d.text(
             xy=(PLAYOFF_MARGIN, _PLAYOFF_L_TOP - 34),
             text="LOSERS BRACKET",
@@ -642,11 +751,11 @@ def _draw_labels(
     for col, label in enumerate(("W R1", "W R2", "W R3", "W R4")):
         if not any(
             allowed(slot)
-            for slot in PLAYOFF_SLOT_POS
-            if slot.startswith("W-") and PLAYOFF_SLOT_POS[slot][0] == col
+            for slot in positions
+            if slot.startswith("W-") and positions[slot][0] == col
         ):
             continue
-        top = _column_label_top("W-", col)
+        top = _column_label_top("W-", col, positions)
         if top is None:
             continue
         d.text(
@@ -659,11 +768,11 @@ def _draw_labels(
     for col, label in enumerate(("L R1", "L R2", "L R3", "L R4", "L R5", "L R6"), 1):
         if not any(
             allowed(slot)
-            for slot in PLAYOFF_SLOT_POS
-            if slot.startswith("L-") and PLAYOFF_SLOT_POS[slot][0] == col
+            for slot in positions
+            if slot.startswith("L-") and positions[slot][0] == col
         ):
             continue
-        top = _column_label_top("L-", col)
+        top = _column_label_top("L-", col, positions)
         if top is None:
             continue
         d.text(
@@ -675,19 +784,25 @@ def _draw_labels(
         )
 
     if show_grand_final and allowed("GF-M1"):
-        gf_left = PLAYOFF_MARGIN + (PLAYOFF_COLS - 1) * PLAYOFF_COL_STEP + 6
+        gf_left = (
+            PLAYOFF_MARGIN
+            + positions["GF-M1"][0] * PLAYOFF_COL_STEP
+            + 6
+        )
         if champion:
-            _draw_champion_banner(img, d, champion)
+            _draw_champion_banner(
+                img, d, champion, right=champion_right
+            )
         d.text(
-            xy=(gf_left, PLAYOFF_SLOT_POS["GF-M1"][1] - 24),
+            xy=(gf_left, positions["GF-M1"][1] - 24),
             text="GRAND FINAL",
             fill=PLAYOFF_LABEL_COLOR,
             font=PLAYOFF_LABEL_FONT,
             anchor="lm",
         )
-        if "GF-M2" in PLAYOFF_SLOT_POS and allowed("GF-M2"):
+        if "GF-M2" in positions and allowed("GF-M2"):
             d.text(
-                xy=(gf_left, PLAYOFF_SLOT_POS["GF-M2"][1] - 20),
+                xy=(gf_left, positions["GF-M2"][1] - 20),
                 text="BRACKET RESET",
                 fill=PLAYOFF_RESET_COLOR,
                 font=PLAYOFF_LABEL_FONT,
@@ -718,7 +833,7 @@ async def get_playoff(view: str = "full", season: int | None = None):
         table_hash = hashlib.sha3_256(
             bytes(
                 repr(_match_signature(matches))
-                + f"playoff_v11_{view}_{season}",
+                + f"playoff_v12_{view}_{season}",
                 "utf-8",
             )
         ).hexdigest()
@@ -733,10 +848,24 @@ async def get_playoff(view: str = "full", season: int | None = None):
     if view == "winners":
         allowed_slots = {s for s in PLAYOFF_SLOT_POS if s.startswith("W-")}
         allowed_slots |= {"GF-M1", "GF-M2"}
+        positions = _winners_positions()
     elif view == "losers":
         allowed_slots = {s for s in PLAYOFF_SLOT_POS if s.startswith("L-")}
+        positions = PLAYOFF_SLOT_POS
     else:
         allowed_slots = set(PLAYOFF_SLOT_POS)
+        positions = PLAYOFF_SLOT_POS
+
+    champion_right = (
+        PLAYOFF_LAYOUT_W - PLAYOFF_MARGIN
+        if view == "full"
+        else max(
+            PLAYOFF_MARGIN
+            + positions[slot][0] * PLAYOFF_COL_STEP
+            + PLAYOFF_BOX_W
+            for slot in allowed_slots
+        )
+    )
 
     row_by_id = {
         int(match[9][2:]): match
@@ -768,8 +897,14 @@ async def get_playoff(view: str = "full", season: int | None = None):
         )
         d = ImageDraw.Draw(img)
 
-        _draw_connectors(d, allowed_slots)
-        for slot, (col, top) in PLAYOFF_SLOT_POS.items():
+        feed_bottom = max(
+            positions[slot][1] + PLAYOFF_BOX_H for slot in allowed_slots
+        ) + 40
+
+        _draw_connectors(d, allowed_slots, positions)
+        if view == "winners":
+            _draw_losers_feed_line(d, positions, feed_bottom)
+        for slot, (col, top) in positions.items():
             if slot not in allowed_slots:
                 continue
             _make_po_box(
@@ -783,6 +918,9 @@ async def get_playoff(view: str = "full", season: int | None = None):
                 row_by_id=row_by_id,
                 champion_id=champion_id,
                 champion_slot=champion_slot,
+                hide_p2_placeholder=(
+                    view == "winners" and slot == "GF-M1"
+                ),
             )
         _draw_labels(
             img,
@@ -790,18 +928,24 @@ async def get_playoff(view: str = "full", season: int | None = None):
             allowed_slots,
             show_grand_final=(view in ("full", "winners")),
             champion=champion if view in ("full", "winners") else None,
+            positions=positions,
+            champion_right=champion_right,
         )
+        if view == "winners":
+            _draw_losers_feed_label(img, positions, feed_bottom)
 
         if view != "full":
             xs = []
             ys = []
             for slot in allowed_slots:
-                col, top = PLAYOFF_SLOT_POS[slot]
+                col, top = positions[slot]
                 left = PLAYOFF_MARGIN + col * PLAYOFF_COL_STEP
                 xs.extend((left, left + PLAYOFF_BOX_W))
                 ys.extend((top - 34, top + PLAYOFF_BOX_H))
             if champion and view == "winners":
-                _, banner_top, _, banner_bottom = _champion_banner_rect()
+                _, banner_top, _, banner_bottom = _champion_banner_rect(
+                    champion_right
+                )
                 ys.extend((banner_top, banner_bottom))
             if xs and ys:
                 pad = 48

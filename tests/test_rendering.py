@@ -22,7 +22,10 @@ from bot.rendering.playoff import (
     PLAYOFF_BOX_H,
     PLAYOFF_BOX_W,
     PLAYOFF_CHAMPION_COLOR,
+    PLAYOFF_COL_GAP,
+    PLAYOFF_COL_STEP,
     PLAYOFF_FEEDER_FONT,
+    PLAYOFF_GF_STEP,
     PLAYOFF_LAYOUT_H,
     PLAYOFF_LAYOUT_W,
     PLAYOFF_MARGIN,
@@ -36,9 +39,12 @@ from bot.rendering.playoff import (
     _connector_points,
     _connector_source_y,
     _draw_champion_banner,
+    _draw_losers_feed_line,
+    _losers_feed_geometry,
     _playoff_champion,
     _playoff_placeholder_font,
     _playoff_placeholder_x,
+    _winners_positions,
 )
 from bot.services.pairing import ADVANCEMENT_REVERSE_MAP, PLAYOFF_BRACKET
 
@@ -157,6 +163,65 @@ def test_playoff_placeholder_text_is_centered_and_feeder_font_is_larger():
 
     left = 123
     assert _playoff_placeholder_x(left) == left + PLAYOFF_PLAYER_W / 2
+
+
+def test_winners_view_moves_grand_final_beside_w_r4():
+    positions = _winners_positions()
+    gf_col, gf_top = positions["GF-M1"]
+
+    assert gf_col == positions["W-R4-M1"][0] + 1
+    assert gf_top == positions["W-R4-M1"][1]
+    assert positions["GF-M2"] == (gf_col, gf_top + PLAYOFF_GF_STEP)
+
+    def right_edge(slot: str) -> float:
+        col, _top = positions[slot]
+        return PLAYOFF_MARGIN + col * PLAYOFF_COL_STEP + PLAYOFF_BOX_W
+
+    allowed = {s for s in positions if s.startswith("W-")}
+    allowed |= {"GF-M1", "GF-M2"}
+    assert max(right_edge(slot) for slot in allowed) < (
+        PLAYOFF_MARGIN
+        + PLAYOFF_SLOT_POS["GF-M1"][0] * PLAYOFF_COL_STEP
+        + PLAYOFF_BOX_W
+    )
+
+
+def test_winners_losers_feed_enters_second_gf_row_from_below():
+    positions = _winners_positions()
+    gf_left = (
+        PLAYOFF_MARGIN + positions["GF-M1"][0] * PLAYOFF_COL_STEP
+    )
+    bottom = 720.0
+    feed_x, row_y, returned_bottom = _losers_feed_geometry(
+        positions, bottom
+    )
+
+    assert returned_bottom == bottom
+    assert feed_x == gf_left - PLAYOFF_COL_GAP / 4
+    assert row_y == positions["GF-M1"][1] + PLAYOFF_ROW_H * 1.5
+    assert feed_x < gf_left
+    assert feed_x > (
+        PLAYOFF_MARGIN
+        + positions["W-R4-M1"][0] * PLAYOFF_COL_STEP
+        + PLAYOFF_BOX_W
+    )
+
+    class _Draw:
+        points = None
+
+        def line(self, points, fill, width):
+            self.points = points
+
+    d = _Draw()
+    _draw_losers_feed_line(d, positions, bottom)
+
+    assert d.points == [(feed_x, bottom), (feed_x, row_y), (gf_left, row_y)]
+    # The vertical run stays left of the reset card.
+    reset_left = (
+        PLAYOFF_MARGIN
+        + positions["GF-M2"][0] * PLAYOFF_COL_STEP
+    )
+    assert feed_x < reset_left
 
 
 def test_playoff_champion_banner_is_top_right_and_draws_gold():
@@ -473,7 +538,17 @@ async def test_playoff_winners_view_includes_grand_final(db, tmp_path, monkeypat
     assert filename == str(target)
     with Image.open(target) as img:
         assert img.width > 0 and img.height > 0
-        # The cropped winners view is narrower than the full bracket.
+        # The grand final is compacted beside W R4, so the crop ends there
+        # instead of at the far-right full-bracket column.
+        gf_right = (
+            playoff_module.PLAYOFF_MARGIN
+            + (
+                playoff_module.PLAYOFF_SLOT_POS["W-R4-M1"][0] + 1
+            )
+            * playoff_module.PLAYOFF_COL_STEP
+            + playoff_module.PLAYOFF_BOX_W
+        )
+        assert img.width <= gf_right + 49
         assert img.width < playoff_module.PLAYOFF_LAYOUT_W
 
     assert "GF-M1" in playoff_module.PLAYOFF_SLOT_POS
