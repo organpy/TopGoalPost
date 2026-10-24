@@ -7,9 +7,13 @@ from bot.db.models import EventType, Season, SeasonStatus
 from bot.rendering.StandingsMaker import (
     _fit_name,
     _get_season,
+    _playin_label_x,
     _playin_player_label,
+    box_w,
+    flag_w,
     name_font,
     name_w,
+    pfp_w,
     swiss_specs,
     swiss_texts,
 )
@@ -140,6 +144,19 @@ def test_playin_label_has_no_hp():
     assert _playin_player_label("Player") == "Player"
     assert "HP" not in _playin_player_label("Player")
     assert _playin_player_label("") == "TBA"
+
+
+def test_playin_feeder_labels_center_across_the_empty_half_box():
+    name_column = pfp_w + flag_w + name_w / 2
+    empty_half_box = (pfp_w + flag_w + name_w) / 2
+
+    assert _playin_label_x(10, box_w, 0, True) == 10 + name_column
+    assert _playin_label_x(10, box_w, 0, False) == 10 + empty_half_box
+    assert _playin_label_x(10, box_w, 1, True) == 10 + box_w - name_column
+    assert _playin_label_x(10, box_w, 1, False) == 10 + box_w - empty_half_box
+    assert _playin_label_x(10, box_w, 0, False) < _playin_label_x(
+        10, box_w, 1, False
+    )
 
 
 def test_swiss_survival_board_matches_round_counts():

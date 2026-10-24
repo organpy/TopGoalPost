@@ -676,6 +676,15 @@ def _playin_slot_label(slot: str | None) -> str:
     return text
 
 
+def _playin_label_x(left: float, box_w: float, side: int, has_player: bool) -> float:
+    """Text center for a playin slot: name column or the full empty half-box."""
+    if has_player:
+        offset = pfp_w + flag_w + name_w / 2
+    else:
+        offset = (pfp_w + flag_w + name_w) / 2
+    return left + offset if side == 0 else left + box_w - offset
+
+
 async def get_playin(season: int | None = None):
     async with get_db_manager().get_session() as session:
         season = await _get_season(session, season)
@@ -819,8 +828,14 @@ async def get_playin(season: int | None = None):
                 if is_bye:
                     right_name = "BYE"
 
+                # A player name sits beside its pfp/flag. A pre-placed feeder
+                # (or TBA) has no pfp, so center it across the whole half-box
+                # exactly like the Swiss board.
                 d.text(
-                    xy=(left + pfp_w + flag_w + name_w / 2, top + row_h * (k + 1.5)),
+                    xy=(
+                        _playin_label_x(left, box_w, 0, bool(p1)),
+                        top + row_h * (k + 1.5),
+                    ),
                     text=_playin_player_label(left_name),
                     fill="white",
                     font=name_font,
@@ -828,7 +843,10 @@ async def get_playin(season: int | None = None):
                 )
                 if not is_bye:
                     d.text(
-                        xy=(left + box_w - (pfp_w + flag_w + name_w / 2), top + row_h * (k + 1.5)),
+                        xy=(
+                            _playin_label_x(left, box_w, 1, bool(p2)),
+                            top + row_h * (k + 1.5),
+                        ),
                         text=_playin_player_label(right_name),
                         fill="white",
                         font=name_font,
