@@ -17,28 +17,24 @@ rendered standings images and Discord-thread scheduling.
 
 ---
 
-<h2 id="features"><img src="repopng/tpgFEATURES.png" alt="Features" width="250"></h2>
+<p id="features"><img src="repopng/tpgFEATURES.png" alt="Features" width="250"></p>
 
-- **Tournament engine** — signups, Open, Play-ins, Swiss and a 29-slot
-  double-elimination playoff bracket with a grand-final reset.
-- **Rendered views** — standings boards, playoff brackets, player cards and
-  season summaries.
-- **Match scheduling** — timezone-aware availability, match-time proposals and
-  dedicated Discord threads.
-- **Score flow** — reporting, opponent confirmation, corrections and admin
-  overrides.
-- **Season history** — archived seasons, player stats, career awards and season
-  recaps.
-- **Host tools** — dashboard controls, role-gated admin commands, backups and
-  dummy-data utilities.
+| Area | What it does |
+|------|--------------|
+| **Tournament engine** | Signups, Open, Play-ins, Swiss and a 29-slot double-elimination playoff bracket with a grand-final reset. |
+| **Rendered views** | Standings boards, playoff brackets, player cards and season summaries. |
+| **Match scheduling** | Timezone-aware availability, match-time proposals and dedicated Discord threads. |
+| **Score flow** | Reporting, opponent confirmation, corrections and admin overrides. |
+| **Season history** | Archived seasons, player stats, career awards and season recaps. |
+| **Host tools** | Dashboard controls, role-gated admin commands, backups and dummy-data utilities. |
 
 ---
 
-<h2 id="quick-start"><img src="repopng/TPGstart.png" alt="Quick start" width="250"></h2>
+<p id="quick-start"><img src="repopng/TPGstart.png" alt="Quick start" width="250"></p>
 
 From clone to running bot:
 
-<h3><img src="repopng/TPGinstallation.png" alt="Installation" width="200"></h3>
+<p><img src="repopng/TPGinstallation.png" alt="Installation" width="200"></p>
 
 ```bash
 git clone https://github.com/organpy/srtrt.git
@@ -53,7 +49,7 @@ python main.py
 The bot logs to stdout. It syncs slash commands to the guild in `SERVER_ID` on
 startup and clears global duplicates.
 
-<h3><img src="repopng/TPGenvvar.png" alt="Environment variables" width="200"></h3>
+<p><img src="repopng/TPGenvvar.png" alt="Environment variables" width="200"></p>
 
 | Key | Required | Notes |
 |-----|----------|-------|
@@ -64,11 +60,20 @@ startup and clears global duplicates.
 
 ---
 
-<h2 id="season-lifecycle"><img src="repopng/TPGlifecycle.png" alt="Season lifecycle" width="250"></h2>
+<p id="season-lifecycle"><img src="repopng/TPGlifecycle.png" alt="Season lifecycle" width="250"></p>
 
 ```
 OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → (season ends)
 ```
+
+| Stage | Admin move | What happens | Player view |
+|-------|------------|--------------|-------------|
+| `OFFSEASON` | `!season create N` | Archive the old season and create the next one | `/seasons` |
+| `SIGNUP` | `!season advance SIGNUP` | Registration opens | `/signup`, `/status` |
+| `OPEN` | `!season advance OPEN` → `/tourney generate_open` | Four Open matches per player | `/open`, `/report` |
+| `PLAYIN` | `/tourney start_playins` | Auto-advancing qualifier ladder | `/playins`, `/report` |
+| `SWISS` | `/tourney swiss_round` | 66-match survival ladder | `/swiss`, `/report` |
+| `PLAYOFF` | `/tourney generate_playoffs` | 16-player double-elimination BO3 bracket | `/playoff`, `/report` |
 
 The season state is stored in the `settings` DB table (key `stage`).
 The `SeasonService` enforces **sequential forward** advancement and
@@ -82,14 +87,20 @@ Use `/tourney status` for the recommended next step.
 > commands use `/` and appear in the picker. This avoids hitting Discord's
 > command-registration timeout (~45s) with too many slash commands.
 
-### 1. Create a season
+> Expand a stage for the full walkthrough.
+
+<details>
+<summary><strong>1. Create a season</strong> — start the next season</summary>
 
 ```
 !season create 12          # starts Season 12 in OFFSEASON
 !season advance SIGNUP     # open signups
 ```
 
-### 2. Signups
+</details>
+
+<details>
+<summary><strong>2. Signups</strong> — registration and the persistent button</summary>
 
 Players register with:
 
@@ -113,7 +124,10 @@ A persistent signup button can be posted by an admin (only while `SIGNUP`):
 
 **Config needed:** `signup_role` (set via `!set_config signup_role <role_id>`).
 
-### 3. Open stage
+</details>
+
+<details>
+<summary><strong>3. Open stage</strong> — generate matches and report scores</summary>
 
 Before generating Open, set the players who skip Open and enter Swiss directly.
 The list can be empty (normal for Season 1) and is replaced on each call:
@@ -193,7 +207,10 @@ Admin utilities:
 !unthreadedgames           # list matches with no scheduling thread
 ```
 
-### 4. Playins (stepped ladder)
+</details>
+
+<details>
+<summary><strong>4. Playins</strong> — auto-advancing qualifier ladder</summary>
 
 Open wins decide where each unseeded player enters:
 
@@ -232,7 +249,10 @@ If every entrant already has four wins, no ladder cards are created; those
 players auto-qualify and the next step becomes Swiss.
 `/tourney finish_playins` remains available as a manual retry.
 
-### 5. Swiss stage
+</details>
+
+<details>
+<summary><strong>5. Swiss stage</strong> — 66-match survival ladder</summary>
 
 Swiss is a fixed 32-player survival ladder. Returning seeds plus Playin
 qualifiers must add up to exactly 32. Three wins qualify; three losses
@@ -266,7 +286,10 @@ The final playoff field is 16 players: 4 at 3-0, 6 at 3-1, and 6 at 3-2.
 Before Swiss, `/tourney skip_open` (or `!tourney import_seeds`) sets the
 returning seeds.
 
-### 6. Playoffs
+</details>
+
+<details>
+<summary><strong>6. Playoffs</strong> — double-elimination BO3 bracket</summary>
 
 Top 16 from Swiss results enter a 29-slot double-elimination bracket:
 
@@ -290,11 +313,16 @@ gold name, and a `CHAMPION: <name>` banner is drawn above the grand final column
 (full and winners views). A reset series decides the title, so the gold moves to
 the reset card if one is played.
 
+</details>
+
 ---
 
-<h2 id="commands"><img src="repopng/TPGcmds.png" alt="Commands" width="250"></h2>
+<p id="commands"><img src="repopng/TPGcmds.png" alt="Commands" width="250"></p>
 
-### `!season` (admin — prefix)
+> Expand a command group to see its table.
+
+<details>
+<summary><strong><code>!season</code> — admin prefix</strong></summary>
 
 | Command | Description |
 |---------|-------------|
@@ -302,7 +330,10 @@ the reset card if one is played.
 | `!season create N` | Create Season N (archives the current season, history kept) |
 | `!season advance OFFSEASON\|SIGNUP\|OPEN\|PLAYIN\|SWISS\|PLAYOFF` | Advance state machine |
 
-### `/tourney` (admin — slash)
+</details>
+
+<details>
+<summary><strong><code>/tourney</code> — admin slash progression</strong></summary>
 
 | Command | Description |
 |---------|-------------|
@@ -316,7 +347,10 @@ the reset card if one is played.
 | `/tourney swiss_round round_num:N` | Create the Swiss ladder / show a round |
 | `/tourney generate_playoffs` | Seed playoff bracket from Swiss results |
 
-### `!tourney` (admin — prefix)
+</details>
+
+<details>
+<summary><strong><code>!tourney</code> — prefix progression</strong></summary>
 
 The same progression engine is also exposed as prefix subcommands:
 
@@ -332,7 +366,10 @@ The same progression engine is also exposed as prefix subcommands:
 | `!tourney generate_playoffs` | Generate the playoff bracket |
 | `!tourney import_seeds @1 @2 ...` | Bulk seed import (1–16, by mention order) |
 
-### Player administration
+</details>
+
+<details>
+<summary><strong>Player administration</strong> — host-only <code>/player</code> tools</summary>
 
 `/player` is the single way to inspect and edit a player without touching the
 database. Every subcommand is host-only and replies ephemerally.
@@ -356,7 +393,10 @@ Destructive subcommands ask for a Confirm click first. `/player info` reports
 with no Open matches, instead of a misleading `0-0`. `/player set name:` does
 not rename the Discord nickname.
 
-### Player commands
+</details>
+
+<details>
+<summary><strong>Player commands</strong> — registration, stats and match flow</summary>
 
 | Command | Description |
 |---------|-------------|
@@ -384,7 +424,10 @@ Open shows `Did not play` and a seeded returner shows
 
 All of these reply ephemerally, including the standings images.
 
-### Scheduling
+</details>
+
+<details>
+<summary><strong>Scheduling</strong> — timezones and availability</summary>
 
 | Command | Description |
 |---------|-------------|
@@ -402,7 +445,10 @@ day-of-week based (`Wednesday 19:00–21:00`), so they repeat every week; use
 players may offer a time but not attach a custom message, and admins may
 target any member without a shared match.
 
-### Prefix commands (`!`) — admin only
+</details>
+
+<details>
+<summary><strong>Prefix commands</strong> — admin-only utilities</summary>
 
 | Command | Description |
 |---------|-------------|
@@ -426,7 +472,10 @@ target any member without a shared match.
 | `!dummy_score` | Randomly score all unplayed matches (dev) |
 | `!dummy_replace OLD NEW` | Change a player's Discord ID (dev) |
 
-### Permissions
+</details>
+
+<details>
+<summary><strong>Permissions</strong> — admin and host gating</summary>
 
 Admin/host commands are gated by two layers:
 
@@ -443,9 +492,11 @@ Grant host roles:
 !set_config admin_roles 1234567890,9876543210
 ```
 
+</details>
+
 ---
 
-<h2 id="configuration"><img src="repopng/TPGconfig.png" alt="Configuration" width="250"></h2>
+<p id="configuration"><img src="repopng/TPGconfig.png" alt="Configuration" width="250"></p>
 
 All config lives in the `settings` DB table (flat key–value). Set via
 `!set_config key value` and remove via `!remove_config key`.
@@ -466,7 +517,7 @@ All config lives in the `settings` DB table (flat key–value). Set via
 
 ---
 
-<h2 id="season-archive"><img src="repopng/TPGarchive.png" alt="Season archive" width="250"></h2>
+<p id="season-archive"><img src="repopng/TPGarchive.png" alt="Season archive" width="250"></p>
 
 Ending a season never deletes it. `!season create N`:
 
@@ -497,7 +548,7 @@ still show faces.
 
 ---
 
-## Dashboard
+<p id="dashboard"><img src="repopng/TPGdashboard.png" alt="Dashboard" width="275"></p>
 
 `/dashboard` opens an interactive admin panel with buttons for each stage
 action. The **Next Step** button follows the season state machine and the
@@ -505,17 +556,16 @@ action. The **Next Step** button follows the season state machine and the
 
 ---
 
-## Assets
+<p id="assets"><img src="repopng/TPGassets.png" alt="Assets" width="275"></p>
 
 The `assets/` directory holds:
 
-```
-assets/
-├── flags/       # country flag PNGs (downloaded on demand from twemoji)
-├── fonts/       # Agdasima-Regular.ttf (standings renderer)
-├── pfps/        # player avatars (download with !getpfps or auto on user update)
-└── tables/      # rendered standings images (cached)
-```
+| Path | Contents |
+|------|----------|
+| `assets/flags/` | Country flag PNGs (downloaded on demand from twemoji) |
+| `assets/fonts/` | `Agdasima-Regular.ttf` (standings renderer) |
+| `assets/pfps/` | Player avatars (download with `!getpfps` or auto on user update) |
+| `assets/tables/` | Rendered standings images (cached) |
 
 Avatars are saved on `/signup` and the signup button, refreshed by the
 `on_user_update` listener, and fetched on-demand by the standings renderer.
@@ -527,7 +577,7 @@ CDN on first use and falls back to a transparent box if the fetch fails.
 
 ---
 
-## Testing & dummy data
+<p id="testing"><img src="repopng/TPGtesting.png" alt="Testing & dummy data" width="275"></p>
 
 ```bash
 # full suite (in-memory SQLite)
@@ -551,7 +601,7 @@ python scripts/seed_dummy_players.py
 
 Then point `DATABASE_URL` in `.env` to `sqlite+aiosqlite:///data/my_season.db`.
 
-## DB migrations
+<p id="db-migrations"><img src="repopng/TPGdb.png" alt="Database migrations" width="275"></p>
 
 ```bash
 alembic -c alembic.ini upgrade head
@@ -562,36 +612,58 @@ Migrations live in `migrations/versions/`.
 
 ---
 
-<h2 id="troubleshooting"><img src="repopng/TPGtroubleshooting.png" alt="Troubleshooting" width="250"></h2>
+<p id="troubleshooting"><img src="repopng/TPGtroubleshooting.png" alt="Troubleshooting" width="250"></p>
 
-**Bot doesn't start**
+> Click an issue to expand the fix.
+
+<details>
+<summary><strong>Bot doesn't start</strong></summary>
+
 - Check `DISCORD_TOKEN` and `SERVER_ID` in `.env`
 - Run `alembic -c alembic.ini upgrade head`
 - Verify `data/` directory exists (bot creates `data/bot.db` on first run)
 
-**Tests fail at collection with `OSError: cannot open resource`**
+</details>
+
+<details>
+<summary><strong>Tests fail at collection with <code>OSError: cannot open resource</code></strong></summary>
+
 - Ensure `assets/` has all subdirectories (`fonts/`, `pfps/`, `tables/`,
   `flags/`); rendering paths are anchored to the project root regardless of the
   working directory
 
-**Standings images show no player avatar**
+</details>
+
+<details>
+<summary><strong>Standings images show no player avatar</strong></summary>
+
 - Run `!getpfps` to download guild member avatars into `assets/pfps/`
 - Avatars are named by Discord user ID (`1234.png`)
 - The `on_user_update` listener keeps them fresh on avatar changes
 
-**Slash commands don't appear**
+</details>
+
+<details>
+<summary><strong>Slash commands don't appear</strong></summary>
+
 - Run `!sync_commands` (admin only; closes all sync paths)
 - Restart the bot — it syncs on `setup_hook`
 - Make sure `SERVER_ID` is set in `.env`
 
-**DB errors / "Database manager not initialized"**
+</details>
+
+<details>
+<summary><strong>DB errors / "Database manager not initialized"</strong></summary>
+
 - `init_db_manager()` runs before `get_db_manager()` — the bot calls
   `init_db()` in its `setup_hook` before loading cogs
 - Tests handle this via `conftest.py` fixtures
 
+</details>
+
 ---
 
-## Need help?
+<p id="need-help"><img src="repopng/TPGneedhelp.png" alt="Need help?" width="335"></p>
 
 - **Bugs and feature requests:** open an issue on this repository's tracker, or
   ping the bot's host in your Discord server.
