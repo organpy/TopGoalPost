@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="topgoalpostbanner.svg" alt="TopGoalPost — tournament bot for the Pro Bobble League Circuit" width="100%">
+<img src="repopng/TPGheader.png" alt="TopGoalPost — tournament bot for the Pro Bobble League Circuit" width="100%">
 
 ### A Discord bot for running Pro Bobble League Circuit (PBLC)
 
@@ -11,11 +11,34 @@ rendered standings images and Discord-thread scheduling.
 ![discord.py](https://img.shields.io/badge/Discord-discord.py-5865F2?style=for-the-badge&logo=discord&logoColor=white)
 ![Database](https://img.shields.io/badge/Database-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
 
-[Quick start](#quick-start) · [Season lifecycle](#season-lifecycle) · [Commands](#commands) · [Season archive](#season-archive) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
+[Features](#user-content-features) · [Quick start](#user-content-quick-start) · [Season lifecycle](#user-content-season-lifecycle) · [Commands](#user-content-commands) · [Season archive](#user-content-season-archive) · [Configuration](#user-content-configuration) · [Troubleshooting](#user-content-troubleshooting)
 
 </div>
 
-## Quick start
+---
+
+<h2 id="features"><img src="repopng/tpgFEATURES.png" alt="Features" width="250"></h2>
+
+- **Tournament engine** — signups, Open, Play-ins, Swiss and a 29-slot
+  double-elimination playoff bracket with a grand-final reset.
+- **Rendered views** — standings boards, playoff brackets, player cards and
+  season summaries.
+- **Match scheduling** — timezone-aware availability, match-time proposals and
+  dedicated Discord threads.
+- **Score flow** — reporting, opponent confirmation, corrections and admin
+  overrides.
+- **Season history** — archived seasons, player stats, career awards and season
+  recaps.
+- **Host tools** — dashboard controls, role-gated admin commands, backups and
+  dummy-data utilities.
+
+---
+
+<h2 id="quick-start"><img src="repopng/TPGstart.png" alt="Quick start" width="520"></h2>
+
+From clone to running bot:
+
+<h3><img src="repopng/TPGinstallation.png" alt="Installation" width="420"></h3>
 
 ```bash
 git clone https://github.com/organpy/srtrt.git
@@ -30,7 +53,7 @@ python main.py
 The bot logs to stdout. It syncs slash commands to the guild in `SERVER_ID` on
 startup and clears global duplicates.
 
-### `.env` reference
+<h3><img src="repopng/TPGenvvar.png" alt="Environment variables" width="420"></h3>
 
 | Key | Required | Notes |
 |-----|----------|-------|
@@ -41,7 +64,7 @@ startup and clears global duplicates.
 
 ---
 
-## Season lifecycle
+<h2 id="season-lifecycle"><img src="repopng/TPGlifecycle.png" alt="Season lifecycle" width="520"></h2>
 
 ```
 OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → (season ends)
@@ -269,7 +292,7 @@ the reset card if one is played.
 
 ---
 
-## Commands
+<h2 id="commands"><img src="repopng/TPGcmds.png" alt="Commands" width="520"></h2>
 
 ### `!season` (admin — prefix)
 
@@ -422,7 +445,7 @@ Grant host roles:
 
 ---
 
-## Configuration
+<h2 id="configuration"><img src="repopng/TPGconfig.png" alt="Configuration" width="520"></h2>
 
 All config lives in the `settings` DB table (flat key–value). Set via
 `!set_config key value` and remove via `!remove_config key`.
@@ -443,7 +466,7 @@ All config lives in the `settings` DB table (flat key–value). Set via
 
 ---
 
-## Season archive
+<h2 id="season-archive"><img src="repopng/TPGarchive.png" alt="Season archive" width="520"></h2>
 
 Ending a season never deletes it. `!season create N`:
 
@@ -539,7 +562,7 @@ Migrations live in `migrations/versions/`.
 
 ---
 
-## Troubleshooting
+<h2 id="troubleshooting"><img src="repopng/TPGtroubleshooting.png" alt="Troubleshooting" width="520"></h2>
 
 **Bot doesn't start**
 - Check `DISCORD_TOKEN` and `SERVER_ID` in `.env`
