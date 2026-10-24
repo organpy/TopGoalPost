@@ -18,6 +18,7 @@ from bot.services.season import SeasonService, STATE_ORDER
 from bot.services.match import MatchService
 from bot.services.playin import PlayinService
 from bot.services.pairing import PairingService
+from bot.rendering import prerender
 from bot.rendering.StandingsMaker import _compute_playin_layout
 
 
@@ -126,6 +127,9 @@ class TournamentFlowService:
             byes = gen["round1_byes"]
         except ValueError as e:
             return {"error": str(e), "sync": sync}
+
+        # Open is finished now; keep its final table ready for `/open`.
+        await prerender("OPEN", season)
 
         if not any(gen.get("matches_by_round", {}).values()) and not any(
             gen.get("byes_by_round", {}).values()

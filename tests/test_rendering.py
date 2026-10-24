@@ -229,6 +229,38 @@ async def test_swiss_renders_fixed_five_round_board(db, tmp_path, monkeypatch):
         assert img.size[0] > 5 * 300
 
 
+async def test_prerender_dispatches_finished_stage_and_never_raises(
+    monkeypatch,
+):
+    from bot.rendering import StandingsMaker, prerender
+
+    calls = []
+
+    async def fake_open(season):
+        calls.append(("OPEN", season))
+
+    async def fake_playin(season):
+        calls.append(("PLAYIN", season))
+
+    async def fake_swiss(season):
+        calls.append(("SWISS", season))
+
+    monkeypatch.setattr(StandingsMaker, "get_open", fake_open)
+    monkeypatch.setattr(StandingsMaker, "get_playin", fake_playin)
+    monkeypatch.setattr(StandingsMaker, "get_swiss", fake_swiss)
+
+    await prerender("OPEN", 3)
+    await prerender("PLAYIN", 3)
+    await prerender("SWISS", 3)
+    assert calls == [("OPEN", 3), ("PLAYIN", 3), ("SWISS", 3)]
+
+    async def fail(season):
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(StandingsMaker, "get_open", fail)
+    await prerender("OPEN", 3)
+
+
 async def test_swiss_reuses_and_invalidates_the_local_render_cache(
     db, tmp_path, monkeypatch
 ):

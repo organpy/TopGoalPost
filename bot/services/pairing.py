@@ -18,6 +18,7 @@ from bot.db import (
     MatchRepository,
     MatchPlayerRepository,
 )
+from bot.rendering import prerender
 
 SWISS_FIELD_SIZE = 32
 
@@ -603,4 +604,7 @@ class PairingService:
             top_16 = ranked[:16]
 
         event = await self._get_or_create_event(EventType.PLAYOFF, season)
-        return await self.seed_playoff(event.id, top_16)
+        seeded = await self.seed_playoff(event.id, top_16)
+        # Swiss is finished now; keep its final board ready for `/swiss`.
+        await prerender("SWISS", season)
+        return seeded

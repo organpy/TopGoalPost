@@ -41,6 +41,7 @@ from bot.db import (
     EventRepository,
     MatchRepository,
 )
+from bot.rendering import prerender
 
 TIER_KEYS = {1: "one_wins", 2: "two_wins", 3: "three_wins"}
 SWISS_FIELD_SIZE = 32
@@ -544,6 +545,8 @@ class PlayinService:
                 ps.playin_eliminated = False
 
             await session.commit()
+
+        await prerender("PLAYIN", season)
 
     # ── graph helpers ───────────────────────────────────────
 

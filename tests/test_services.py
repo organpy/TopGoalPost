@@ -1,6 +1,7 @@
 """Unit tests for bot services."""
 
 from collections import Counter
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -1126,13 +1127,18 @@ class TestPlayinService:
         assert created == 0
         assert byes == 0
 
-    async def test_finish_playins_ranks_ladder(self, db, seed_data, setup_playin_data):
+    async def test_finish_playins_ranks_ladder(
+        self, db, seed_data, setup_playin_data, monkeypatch
+    ):
         from bot.services.playin import PlayinService, compute_playin_math
 
+        prerender = AsyncMock()
+        monkeypatch.setattr("bot.services.playin.prerender", prerender)
         svc = PlayinService()
         await svc.generate_playins(1)
         await self._play_ladder(db)
         await svc.finish_playins(1)
+        prerender.assert_any_await("PLAYIN", 1)
 
         async with db.get_session() as session:
             all_ps = await PlayerSeasonRepository(session).get_by_season(1)
@@ -1601,12 +1607,15 @@ async def test_swiss_survival_ladder_counts_and_qualifiers(db):
     )
 
 
-async def test_generate_playoff_bracket_uses_swiss_record(db):
+async def test_generate_playoff_bracket_uses_swiss_record(db, monkeypatch):
     """The top 16 must come from Swiss wins, not Playin rank."""
     from datetime import datetime
     from bot.db.models import SeasonStatus
     from bot.db import Player, PlayerRepository
     from bot.services.pairing import PairingService
+
+    prerender = AsyncMock()
+    monkeypatch.setattr("bot.services.pairing.prerender", prerender)
 
     async with db.get_session() as session:
         session.add(Season(number=1, status=SeasonStatus.ACTIVE))
@@ -1661,6 +1670,7 @@ async def test_generate_playoff_bracket_uses_swiss_record(db):
 
     svc = PairingService()
     await svc.generate_playoff_bracket(1)
+    prerender.assert_awaited_once_with("SWISS", 1)
 
     async with db.get_session() as session:
         event = await EventRepository(session).get_by_type_and_season(
@@ -1763,6 +1773,48 @@ def test_compute_playin_math_targets_32():
     assert math["over_by"] == 3
     assert math["cut_matches"] == 3
     assert sum(math["expected_matches"].values()) == 39
+
+
+class TestTournamentFlow:
+    async def test_start_playins_prerenders_finished_open(
+        self, db, seed_data, monkeypatch
+    ):
+        from datetime import datetime
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await Config().set_season_state("OPEN")
+        async with db.get_session() as session:
+            event = await EventRepository(session).create(
+                "Open", EventType.OPEN, 1
+            )
+            event.status = EventStatus.ACTIVE
+            match_repo = MatchRepository(session)
+            mp_repo = MatchPlayerRepository(session)
+            for i in range(0, 8, 2):
+                match = await match_repo.create(event.id)
+                winner = await mp_repo.create(
+                    match.id, side=0, player_id=seed_data["players"][i].id
+                )
+                loser = await mp_repo.create(
+                    match.id, side=1, player_id=seed_data["players"][i + 1].id
+                )
+                winner.goals = 1
+                winner.is_winner = True
+                loser.goals = 0
+                loser.is_winner = False
+                match.completed_at = datetime.utcnow()
+            await session.commit()
+
+        prerender = AsyncMock()
+        monkeypatch.setattr(
+            "bot.services.tournament_flow.prerender", prerender
+        )
+
+        result = await TournamentFlowService().start_playins(1)
+
+        assert result["ok"] is True
+        prerender.assert_awaited_once_with("OPEN", 1)
 
 
 class TestResultSummary:
