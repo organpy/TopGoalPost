@@ -107,7 +107,9 @@ class SignupService:
                 
             # Check for uncompleted matches in OPEN stage
             if state == "OPEN":
-                unplayed = await mp_repo.get_unplayed_player_matches(player.id)
+                unplayed = await mp_repo.get_unplayed_player_matches(
+                    player.id, season=season_num
+                )
                 if unplayed:
                     return False, (
                         f"Cannot unregister: you still have {len(unplayed)} unplayed match(es). "

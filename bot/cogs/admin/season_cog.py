@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from bot.cogs.checks import require_host
 from bot.services.season import SeasonService
-from bot.db import get_db_manager, PlayerSeason
+from bot.db import get_db_manager, PlayerSeason, SeasonStatus
 from bot.config import Config
 
 
@@ -44,14 +44,28 @@ class SeasonAdminCog(commands.Cog):
 
         await ctx.send(embed=embed)
 
-    @season_group.command(name="create", help="Create a new season (archives the current one and wipes its data)")
+    @season_group.command(name="create", help="Create a new season (archives the current one, history is kept)")
     @require_host()
     async def create_cmd(self, ctx: commands.Context, number: int):
+        existing = await self.season_service.get_season(number)
+        if existing:
+            if existing.status == SeasonStatus.ARCHIVED:
+                await ctx.send(
+                    f"Season {number} is archived and read-only. "
+                    "Pick a new season number."
+                )
+            else:
+                await ctx.send(f"Season {number} is already active.")
+            return
+
         success = await self.season_service.create_season(number)
         if success:
-            await ctx.send(f"Successfully created Season {number} and set state to OFFSEASON.")
+            await ctx.send(
+                f"Successfully created Season {number} and set state to OFFSEASON. "
+                "Previous seasons stay available in `/seasons`."
+            )
         else:
-            await ctx.send(f"Season {number} is already active.")
+            await ctx.send(f"Season {number} already exists.")
 
     @season_group.command(name="advance", help="Advance the season state (SIGNUP, OPEN, PLAYIN, SWISS, PLAYOFF, OFFSEASON)")
     @require_host()

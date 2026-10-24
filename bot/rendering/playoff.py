@@ -620,19 +620,14 @@ def _draw_labels(
             )
 
 
-async def get_playoff(view: str = "full"):
+async def get_playoff(view: str = "full", season: int | None = None):
     view = (view or "full").lower()
     if view not in {"full", "winners", "losers"}:
         view = "full"
-    filenames = {
-        "full": "playoff.png",
-        "winners": "playoff_winners.png",
-        "losers": "playoff_losers.png",
-    }
-    filename = asset_path("tables", filenames[view])
 
     async with get_db_manager().get_session() as session:
-        season = await _get_season(session)
+        season = await _get_season(session, season)
+        filename = asset_path("tables", f"playoff_s{season}_{view}.png")
         event = await _get_event(session, EventType.PLAYOFF, season)
         matches = []
         if event:

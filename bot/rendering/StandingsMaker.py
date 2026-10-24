@@ -68,7 +68,9 @@ def _fit_name(text: str, max_width: int = name_w - 4, font=name_font) -> str:
     return text + ellipsis
 
 
-async def _get_season(session) -> int:
+async def _get_season(session, season: int | None = None) -> int:
+    if season is not None:
+        return season
     season = await SeasonRepository(session).get_active()
     if season:
         return season.number
@@ -432,32 +434,33 @@ def get_flag(country_code: str, width: float | None = None) -> Image:
     return flag
 
 
-async def get_open(sort_by_rank: int = 0):
+async def get_open(sort_by_rank: int = 0, season: int | None = None):
     return await _get_open_table(
         sort_by_rank=sort_by_rank,
-        filename=asset_path("tables", "open.png"),
         header_color=open_color,
+        season=season,
         return_players=False,
     )
 
 
-async def get_open_with_players(sort_by_rank: int = 0):
+async def get_open_with_players(sort_by_rank: int = 0, season: int | None = None):
     return await _get_open_table(
         sort_by_rank=sort_by_rank,
-        filename=asset_path("tables", "open.png"),
         header_color=open_color,
+        season=season,
         return_players=True,
     )
 
 
 async def _get_open_table(
     sort_by_rank: int,
-    filename: str,
     header_color: tuple[int, int, int],
+    season: int | None = None,
     return_players: bool = False,
 ):
     async with get_db_manager().get_session() as session:
-        season = await _get_season(session)
+        season = await _get_season(session, season)
+        filename = asset_path("tables", f"open_s{season}.png")
         event = await _get_event(session, EventType.OPEN, season)
 
         matches: list[list] = []
@@ -492,7 +495,10 @@ async def _get_open_table(
         layout_version = "open_table_v2"
         table_hash = hashlib.sha3_256(
             bytes(
-                repr(_match_signature(matches)) + repr(sort_by_rank) + layout_version,
+                repr(_match_signature(matches))
+                + repr(sort_by_rank)
+                + repr(season)
+                + layout_version,
                 "utf-8",
             )
         ).hexdigest()
@@ -670,10 +676,10 @@ def _playin_slot_label(slot: str | None) -> str:
     return text
 
 
-async def get_playin():
-    filename = asset_path("tables", "playin.png")
+async def get_playin(season: int | None = None):
     async with get_db_manager().get_session() as session:
-        season = await _get_season(session)
+        season = await _get_season(session, season)
+        filename = asset_path("tables", f"playin_s{season}.png")
         playin_event = await _get_event(session, EventType.PLAYIN, season)
 
         matches = []
@@ -889,10 +895,10 @@ async def get_playin():
     )
 
 
-async def get_swiss():
-    filename = asset_path("tables", "swiss.png")
+async def get_swiss(season: int | None = None):
     async with get_db_manager().get_session() as session:
-        season = await _get_season(session)
+        season = await _get_season(session, season)
+        filename = asset_path("tables", f"swiss_s{season}.png")
         event = await _get_event(session, EventType.SWISS, season)
         matches = []
         if event:

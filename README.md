@@ -11,7 +11,7 @@ rendered standings images and Discord-thread scheduling.
 ![discord.py](https://img.shields.io/badge/Discord-discord.py-5865F2?style=for-the-badge&logo=discord&logoColor=white)
 ![Database](https://img.shields.io/badge/Database-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
 
-[Quick start](#quick-start) · [Season lifecycle](#season-lifecycle) · [Commands](#commands) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
+[Quick start](#quick-start) · [Season lifecycle](#season-lifecycle) · [Commands](#commands) · [Season archive](#season-archive) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -275,7 +275,7 @@ the reset card if one is played.
 | Command | Description |
 |---------|-------------|
 | `!season status` | Current season number + state |
-| `!season create N` | Create Season N (archives current + wipes old-season data) |
+| `!season create N` | Create Season N (archives the current season, history kept) |
 | `!season advance OFFSEASON\|SIGNUP\|OPEN\|PLAYIN\|SWISS\|PLAYOFF` | Advance state machine |
 
 ### `/tourney` (admin — slash)
@@ -343,8 +343,9 @@ not rename the Discord nickname.
 | `/report` | Pick match, then preset or custom score |
 | `/forfeit match_id:X` | Concede a match |
 | `/list_matches [stage] [status] [round_num] [player] [page]` | Browse matches with filters |
-| `/open`, `/playins`, `/swiss` | Standings images |
-| `/playoff view:full\|winners\|losers` | Full bracket or one branch |
+| `/open`, `/playins`, `/swiss` | Standings images (`season:N` for a past season) |
+| `/playoff view:full\|winners\|losers` | Full bracket or one branch (`season:N` for a past season) |
+| `/seasons` | List seasons with status, champion and end date |
 | `/profile username:User [season:N]` | Season stats: games, wins, goals, GD, per-stage records |
 | `/playercard username:User [season:N]` | Rendered player card image (games, wins, goals, stage table) |
 | `/history username:User [season:N]` | Recent match results |
@@ -379,7 +380,7 @@ target any member without a shared match.
 | Command | Description |
 |---------|-------------|
 | `!season status` | Current season number and state |
-| `!season create N` | Create Season N (archives current + wipes old-season data) |
+| `!season create N` | Create Season N (archives the current season, history kept) |
 | `!season advance STATE` | Advance the state machine |
 | `!set_config key value` | Set a config value |
 | `!remove_config key` | Delete a config value |
@@ -438,21 +439,33 @@ All config lives in the `settings` DB table (flat key–value). Set via
 
 ---
 
-## Season isolation
+## Season archive
 
-Each season owns its data exclusively. `!season create N`:
+Ending a season never deletes it. `!season create N`:
 
-1. Archives the current active season
-2. **Wipes all rows from previous seasons** — events, matches, match players,
-   registrations, and orphaned player records
-3. Clears the rendered-image cache and generated `assets/tables/*.png`, and
-   removes cached player avatars (except the default/circle templates)
-4. Resets the state machine to `OFFSEASON`
+1. Archives the current active season (`ended_at` is stamped)
+2. Creates Season N and resets the state machine to `OFFSEASON`
+3. Clears the rendered-image cache and generated `assets/tables/*.png`
 
-So a fresh season starts with an empty roster: signups and `!dummy_add`
-never overlap with last season's players. Global user preferences
-(timezones, timeslots, settings) survive across seasons. Avatars are
-re-downloaded on signup, login, or `!getpfps`.
+Events, matches, registrations, stats and player avatars stay in the database,
+so old brackets and player records remain viewable forever. Archived seasons
+are read-only: a season number can never be reused or reopened
+(`!season create N` refuses any number that already exists).
+
+Every bracket command takes an optional `season:` (defaults to the active
+season), and renders are written per season (`open_s3.png`, `playin_s3.png`,
+`swiss_s3.png`, `playoff_s3_full.png`) so looking at an old season can never
+overwrite the live one. `/seasons` lists what is available:
+
+```
+/seasons
+/open season:2
+/profile username:Alice season:2
+```
+
+Global user preferences (timezones, timeslots, settings) survive across
+seasons, and player avatars are kept when rolling over so archived brackets
+still show faces.
 
 ---
 

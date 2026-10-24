@@ -806,7 +806,7 @@ class MatchService:
                 return f"No player found with Discord ID {discord_id}."
 
             mp_repo = MatchPlayerRepository(session)
-            mps = await mp_repo.get_unplayed_player_matches(player.id)
+            mps = await mp_repo.get_unplayed_player_matches(player.id, season=season)
 
             deleted = 0
             skipped = 0
@@ -837,10 +837,13 @@ class MatchService:
             msg += f" Skipped {skipped} Swiss/Playoff match(es)."
         return msg
 
-    async def forfeit_all_player_matches(self, discord_id: int) -> str:
+    async def forfeit_all_player_matches(
+        self, discord_id: int, season: Optional[int] = None
+    ) -> str:
         """Forfeit all uncompleted matches for a player.
 
-        Each match gets a 1-0 default score in favor of the opponent.
+        Each match gets a 1-0 default score in favor of the opponent. When a
+        season is given, only that season's matches are touched.
 
         Returns:
             A human-readable result message.
@@ -854,7 +857,7 @@ class MatchService:
                 return f"No player found with Discord ID {discord_id}."
 
             mp_repo = MatchPlayerRepository(session)
-            mps = await mp_repo.get_unplayed_player_matches(player.id)
+            mps = await mp_repo.get_unplayed_player_matches(player.id, season=season)
 
             if not mps:
                 return f"{player.name} has no uncompleted matches to forfeit."

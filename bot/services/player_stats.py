@@ -7,10 +7,11 @@ never disagree about a player's record.
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from bot.db import (
@@ -141,6 +142,16 @@ class PlayerStats:
         return self.registered or self.total.played
 
 
+@dataclass
+class SeasonInfo:
+    """One archived (or active) season for the archive overview."""
+
+    number: int
+    active: bool
+    champion: Optional[str]
+    ended_at: Optional[datetime]
+
+
 _STAGE_FIELD = {
     EventType.OPEN: "open",
     EventType.PLAYIN: "playin",
@@ -164,6 +175,59 @@ class PlayerStatsService:
         if active and active.number not in seasons:
             seasons.insert(0, active.number)
         return sorted(set(seasons), reverse=True)
+
+    async def season_overview(self) -> list[SeasonInfo]:
+        """Seasons with data, newest first, including champion names."""
+        async with self.db.get_session() as session:
+            numbers = set(
+                (await session.execute(select(Event.season).distinct())).scalars()
+            )
+            active = await SeasonRepository(session).get_active()
+            if active:
+                numbers.add(active.number)
+            if not numbers:
+                return []
+
+            stmt = (
+                select(Season)
+                .options(selectinload(Season.champion))
+                .where(Season.number.in_(numbers))
+                .order_by(Season.number.desc())
+            )
+            seasons = (await session.execute(stmt)).scalars().unique().all()
+            return [
+                SeasonInfo(
+                    number=season.number,
+                    active=season.status == SeasonStatus.ACTIVE,
+                    champion=season.champion.name if season.champion else None,
+                    ended_at=season.ended_at,
+                )
+                for season in seasons
+            ]
+
+    async def resolve_player(
+        self, username: str, season_number: int
+    ) -> Optional[Player]:
+        """Find a player by name, preferring that season's roster.
+
+        Names are global, so two seasons can hold different players with the
+        same name. Looking inside the requested season first keeps archived
+        stats pointed at the right person.
+        """
+        async with self.db.get_session() as session:
+            stmt = (
+                select(Player)
+                .join(PlayerSeason, PlayerSeason.player_id == Player.id)
+                .where(
+                    PlayerSeason.season_number == season_number,
+                    func.lower(Player.name) == username.lower(),
+                )
+                .limit(1)
+            )
+            player = (await session.execute(stmt)).scalars().first()
+            if player is None:
+                player = await PlayerRepository(session).get_by_name(username)
+            return player
 
     async def get_stats(
         self, player_id: int, season_number: int

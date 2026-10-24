@@ -438,9 +438,10 @@ class TestMatchCog:
         )
 
     async def test_report_autocomplete_loads_nested_players(self, mock_interaction, mock_bot):
-        from bot.db import EventRepository, EventType, Match, MatchPlayer
+        from bot.db import EventRepository, EventType, Match, MatchPlayer, Season, SeasonStatus
 
         async with get_db_manager().get_session() as session:
+            session.add(Season(number=1, status=SeasonStatus.ACTIVE))
             event = await EventRepository(session).create(
                 name="Autocomplete Open",
                 event_type=EventType.OPEN,
@@ -1176,7 +1177,9 @@ class TestPlayerAdmin:
 
         cog.match_service.remove_player_from_matches.assert_awaited_once_with(42, 1)
         cog.match_service.delete_player_matches.assert_awaited_once_with(42, 1)
-        cog.match_service.forfeit_all_player_matches.assert_awaited_once_with(42)
+        cog.match_service.forfeit_all_player_matches.assert_awaited_once_with(
+            42, season=1
+        )
         cog.match_service.substitute_player.assert_awaited_once_with(42, 7, 1)
 
     async def test_match_commands_respect_cancel(

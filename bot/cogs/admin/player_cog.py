@@ -21,7 +21,7 @@ from bot.cogs.scheduling.schedule_cog import (
     time_autocomplete,
     timezone_autocomplete,
 )
-from bot.cogs.standings.stats_cog import season_autocomplete
+from bot.ui.autocomplete import season_autocomplete
 from bot.db import (
     get_db_manager,
     PlayerRepository,
@@ -610,7 +610,10 @@ class PlayerCog(commands.Cog):
             await interaction.followup.send("Cancelled.", ephemeral=True)
             return
 
-        msg = await self.match_service.forfeit_all_player_matches(target.id)
+        msg = await self.match_service.forfeit_all_player_matches(
+            target.id,
+            season=await self.season_service.get_current_season_number(),
+        )
         await interaction.followup.send(msg, ephemeral=True)
 
     @player.command(

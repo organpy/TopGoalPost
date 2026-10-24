@@ -210,3 +210,23 @@ def test_stage_record_helpers():
     assert record.goals_against == 3
     assert record.goal_diff == 0
     assert record.win_rate == 0.5
+
+
+async def test_resolve_player_prefers_the_season_roster(db):
+    """Two players can share a name across seasons; pick the right one."""
+    async with db.get_session() as session:
+        session.add_all([Season(number=1), Season(number=2)])
+        await session.flush()
+
+        old = await PlayerRepository(session).create(discord_id=11, name="Alex")
+        new = await PlayerRepository(session).create(discord_id=12, name="Alex")
+        session.add_all([
+            PlayerSeason(player_id=old.id, season_number=1),
+            PlayerSeason(player_id=new.id, season_number=2),
+        ])
+        await session.commit()
+        old_id, new_id = old.id, new.id
+
+    svc = PlayerStatsService()
+    assert (await svc.resolve_player("alex", 1)).id == old_id
+    assert (await svc.resolve_player("Alex", 2)).id == new_id

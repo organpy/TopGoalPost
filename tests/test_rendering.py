@@ -242,7 +242,7 @@ async def test_swiss_renders_incremental_one_sided_slot(db, tmp_path, monkeypatc
         "asset_path",
         lambda *parts: (
             str(target)
-            if parts == ("tables", "swiss.png")
+            if parts == ("tables", "swiss_s1.png")
             else real_asset_path(*parts)
         ),
     )
@@ -498,3 +498,61 @@ def test_player_card_renders_every_state(tmp_path):
         path = render_player_card(stats, str(tmp_path / f"{name}.png"))
         with Image.open(path) as img:
             assert img.size == (CARD_W, CARD_H)
+
+
+async def test_open_renders_one_file_per_season(db, tmp_path, monkeypatch):
+    """Archived seasons get their own filename and do not overwrite the live one."""
+    from datetime import datetime
+    from bot.db import Event, Match, MatchPlayer, Player
+    from bot.rendering import StandingsMaker as standings
+    from bot.rendering import asset_path as real_asset_path
+
+    async with db.get_session() as session:
+        session.add_all([
+            Season(number=1, status=SeasonStatus.ARCHIVED),
+            Season(number=2, status=SeasonStatus.ACTIVE),
+        ])
+        await session.flush()
+        p1 = Player(discord_id=201, name="OldTimer", country="us")
+        p2 = Player(discord_id=202, name="Newcomer", country="fr")
+        session.add_all([p1, p2])
+        await session.flush()
+
+        old_event = Event(name="S1 Open", type=EventType.OPEN, season=1)
+        new_event = Event(name="S2 Open", type=EventType.OPEN, season=2)
+        session.add_all([old_event, new_event])
+        await session.flush()
+
+        for event, winner, loser in ((old_event, p1, p2), (new_event, p2, p1)):
+            match = Match(event_id=event.id, completed_at=datetime.utcnow())
+            session.add(match)
+            await session.flush()
+            session.add_all([
+                MatchPlayer(
+                    match_id=match.id, side=0, player_id=winner.id,
+                    goals=5, is_winner=True,
+                ),
+                MatchPlayer(
+                    match_id=match.id, side=1, player_id=loser.id,
+                    goals=1, is_winner=False,
+                ),
+            ])
+        await session.commit()
+
+    monkeypatch.setattr(
+        standings,
+        "asset_path",
+        lambda *parts: (
+            str(tmp_path / parts[-1])
+            if parts and parts[0] == "tables"
+            else real_asset_path(*parts)
+        ),
+    )
+
+    _, old_file, *_ = await standings.get_open(season=1)
+    _, new_file, *_ = await standings.get_open(season=2)
+
+    assert old_file.endswith("open_s1.png")
+    assert new_file.endswith("open_s2.png")
+    assert (tmp_path / "open_s1.png").stat().st_size > 0
+    assert (tmp_path / "open_s2.png").stat().st_size > 0

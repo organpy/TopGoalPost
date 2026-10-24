@@ -270,13 +270,19 @@ class MatchPlayerRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def get_unplayed_player_matches(self, player_id: int) -> list[MatchPlayer]:
+    async def get_unplayed_player_matches(
+        self, player_id: int, season: Optional[int] = None
+    ) -> list[MatchPlayer]:
         stmt = select(MatchPlayer).join(Match).where(
             and_(
                 MatchPlayer.player_id == player_id,
                 Match.completed_at.is_(None),
             )
         )
+        if season is not None:
+            stmt = stmt.join(Event, Match.event_id == Event.id).where(
+                Event.season == season
+            )
         result = await self.session.execute(stmt)
         return result.scalars().all()
 

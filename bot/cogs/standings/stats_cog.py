@@ -19,20 +19,9 @@ from bot.services.player_stats import PlayerStats, PlayerStatsService
 from bot.services.season import SeasonService
 from bot.db import get_db_manager, PlayerRepository
 from bot.db.models import Player as DbPlayer
+from bot.ui.autocomplete import season_autocomplete
 
 CHAMPION_COLOR = discord.Color.from_rgb(245, 196, 70)
-
-
-async def season_autocomplete(
-    interaction: discord.Interaction, current: str
-) -> list[app_commands.Choice[int]]:
-    """Seasons that actually have tournament data, newest first."""
-    seasons = await PlayerStatsService().available_seasons()
-    return [
-        app_commands.Choice(name=f"Season {number}", value=number)
-        for number in seasons
-        if current in str(number)
-    ][:25]
 
 
 class HistoryView(View):
@@ -101,12 +90,13 @@ class StatsCog(commands.Cog):
             )
             return None
 
-        async with self.db.get_session() as session:
-            repo = PlayerRepository(session)
-            if username:
-                player = await repo.get_by_name(username)
-            else:
-                player = await repo.get_by_discord_id(interaction.user.id)
+        if username:
+            player = await self.stats_service.resolve_player(username, season_num)
+        else:
+            async with self.db.get_session() as session:
+                player = await PlayerRepository(session).get_by_discord_id(
+                    interaction.user.id
+                )
 
         if player is None:
             message = (
@@ -306,6 +296,33 @@ class StatsCog(commands.Cog):
 
         view = HistoryView(pages, interaction.user.id) if len(pages) > 1 else None
         await interaction.followup.send(content=pages[0], view=view, ephemeral=True)
+
+    @app_commands.command(name="seasons", description="List seasons and their champions")
+    async def seasons_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        seasons = await self.stats_service.season_overview()
+        if not seasons:
+            await interaction.followup.send("No seasons with data yet.", ephemeral=True)
+            return
+
+        lines = []
+        for info in seasons[:20]:
+            line = f"**Season {info.number}** · {'Active' if info.active else 'Archived'}"
+            if info.champion:
+                line += f" · 🏆 {info.champion}"
+            if info.ended_at:
+                line += f" · ended {info.ended_at:%Y-%m-%d}"
+            lines.append(line)
+
+        embed = discord.Embed(
+            title="Seasons",
+            description="\n".join(lines),
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(
+            text="Add season:N to /open, /swiss, /playoff, /profile or /playercard"
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 async def setup(bot):

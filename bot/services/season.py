@@ -5,15 +5,8 @@ Handles season lifecycle: creation, advancing stages, archiving.
 
 from typing import Optional
 
-from sqlalchemy import delete, select
-
 from bot.db import (
     get_db_manager,
-    Event,
-    Match,
-    MatchPlayer,
-    Player,
-    PlayerSeason,
     Season,
     SeasonStatus,
     SeasonRepository,
@@ -65,35 +58,27 @@ class SeasonService:
                 return None
 
     async def create_season(self, season_number: int) -> bool:
-        """Create a new season and archive the previous one if it exists.
+        """Create a new season and archive the previous one.
 
-        Wipes all data belonging to other seasons (events, matches, player
-        registrations, players) so each season starts with a clean roster.
+        History is kept: archived seasons keep their events, matches,
+        registrations and players so brackets and stats stay viewable. Archived
+        seasons cannot be reopened; create a new number instead.
         Also resets the config state to OFFSEASON so it can be manually advanced.
         """
         async with self.db.get_session() as session:
             repo = SeasonRepository(session)
 
-            # Archive existing active season
+            # Never reuse a season number: archived data is read-only.
+            if await repo.get_by_number(season_number):
+                return False
+
             active = await repo.get_active()
             if active:
-                if active.number == season_number:
-                    return False  # Already exists and is active
-                active.status = SeasonStatus.ARCHIVED
+                await repo.archive(active.number)
 
-            # Check if requested season already exists in db (maybe archived)
-            existing = await repo.get_by_number(season_number)
-            if existing:
-            # If it already exists, just make it active again
-                existing.status = SeasonStatus.ACTIVE
-                session.add(existing)
-            else:
-                season = Season(number=season_number, status=SeasonStatus.ACTIVE)
-                session.add(season)
-
+            session.add(Season(number=season_number, status=SeasonStatus.ACTIVE))
             await session.commit()
 
-        await self._purge_other_seasons(season_number)
         await self._clear_generated_assets()
 
         # Reset state to offseason
@@ -101,21 +86,20 @@ class SeasonService:
         await config.set_season_state("OFFSEASON")
         return True
 
+    async def get_season(self, number: int) -> Optional[Season]:
+        """Return a season row whether it is active or archived."""
+        async with self.db.get_session() as session:
+            return await SeasonRepository(session).get_by_number(number)
+
     async def _clear_generated_assets(self) -> None:
-        """Drop cached images so a new season cannot reuse last season's art."""
+        """Drop cached tables so the new season starts with fresh art.
+
+        Player avatars are keyed by Discord ID and shared across seasons, so
+        they are kept — deleting them would strip archived brackets of faces.
+        """
         async with self.db.get_session() as session:
             await ImageCacheRepository(session).delete_all()
             await session.commit()
-
-        pfps = ASSETS_ROOT / "pfps"
-        if pfps.exists():
-            for path in pfps.glob("*.png"):
-                if path.name in {"default.png", "circle.png"}:
-                    continue
-                try:
-                    path.unlink()
-                except OSError:
-                    pass
 
         tables = ASSETS_ROOT / "tables"
         if tables.exists():
@@ -124,34 +108,6 @@ class SeasonService:
                     path.unlink()
                 except OSError:
                     pass
-
-    async def _purge_other_seasons(self, keep_number: int) -> int:
-        """Delete every row tied to a season other than keep_number.
-
-        Cascades: match_players -> matches -> events -> player_seasons ->
-        orphaned players. Global user prefs (timezones, timeslots, settings)
-        are preserved. Returns number of seasons purged.
-        """
-        async with self.db.get_session() as session:
-            old_event_ids = select(Event.id).where(Event.season != keep_number)
-            old_match_ids = select(Match.id).where(Match.event_id.in_(old_event_ids))
-
-            await session.execute(
-                delete(MatchPlayer).where(MatchPlayer.match_id.in_(old_match_ids))
-            )
-            await session.execute(delete(Match).where(Match.id.in_(old_match_ids)))
-            await session.execute(delete(Event).where(Event.season != keep_number))
-            await session.execute(
-                delete(PlayerSeason).where(PlayerSeason.season_number != keep_number)
-            )
-
-            surviving_players = select(PlayerSeason.player_id).where(
-                PlayerSeason.season_number == keep_number
-            )
-            await session.execute(
-                delete(Player).where(Player.id.not_in(surviving_players))
-            )
-            await session.commit()
 
     async def advance_state(self, new_state: str) -> bool:
         """Advance the season state.

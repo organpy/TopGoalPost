@@ -21,14 +21,20 @@ class MatchCog(commands.Cog):
         self.db = get_db_manager()
 
     async def match_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-        """Autocomplete for a user's active matches."""
+        """Autocomplete for a user's active matches in the current season."""
         discord_id = interaction.user.id
         choices = []
         async with self.db.get_session() as session:
             from bot.db import Match as M
             from sqlalchemy import select, and_
             from sqlalchemy.orm import selectinload
-            from bot.db import MatchPlayer as MP
+            from bot.db import MatchPlayer as MP, Event
+            from bot.services.season import SeasonService
+
+            season = await SeasonService().get_current_season_number()
+            if not season:
+                return []
+
             pr = PlayerRepository(session)
             player = await pr.get_by_discord_id(discord_id)
             if not player:
@@ -37,7 +43,14 @@ class MatchCog(commands.Cog):
                 select(M)
                 .options(selectinload(M.match_players).selectinload(MP.player))
                 .join(MP)
-                .where(and_(MP.player_id == player.id, M.completed_at.is_(None)))
+                .join(Event, M.event_id == Event.id)
+                .where(
+                    and_(
+                        MP.player_id == player.id,
+                        M.completed_at.is_(None),
+                        Event.season == season,
+                    )
+                )
                 .order_by(M.id.desc())
                 .limit(25)
             )

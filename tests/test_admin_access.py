@@ -1,4 +1,4 @@
-"""Tests for role-based command gating and per-season data isolation."""
+"""Tests for role-based command gating and season archiving."""
 
 from types import SimpleNamespace
 
@@ -126,8 +126,8 @@ async def old_season_data(db):
     return {"season": 1, "player_discord_ids": [2000, 2001, 2002, 2003], "event": event, "match": m}
 
 
-class TestSeasonPurge:
-    async def test_create_new_season_wipes_old_data(self, db, old_season_data):
+class TestSeasonArchiving:
+    async def test_create_new_season_keeps_old_data(self, db, old_season_data):
         svc = SeasonService()
         assert await svc.create_season(2) is True
 
@@ -139,12 +139,55 @@ class TestSeasonPurge:
             mps = (await session.execute(MatchPlayer.__table__.select())).fetchall()
             pss = (await session.execute(PlayerSeason.__table__.select())).fetchall()
 
-        assert players == []
-        assert matches == []
-        assert mps == []
-        assert pss == []
+        assert len(players) == 4
+        assert len(matches) == 1
+        assert len(mps) == 2
+        assert len(pss) == 4
         assert [s.number for s in seasons] == [1, 2]  # archived + new
-        assert events == []
+        assert [s.status.value for s in seasons] == ["archived", "active"]
+        assert len(events) == 1 and events[0].season == 1
+
+    async def test_archived_season_cannot_be_reopened(self, db, old_season_data):
+        svc = SeasonService()
+        await svc.create_season(2)
+
+        assert await svc.create_season(1) is False
+        assert (await svc.get_season(1)).status.value == "archived"
+        assert (await svc.get_season(2)).status.value == "active"
+
+    async def test_old_season_stats_survive_rollover(self, db, old_season_data):
+        from datetime import datetime
+
+        from sqlalchemy import select
+
+        from bot.services.player_stats import OpenState, PlayerStatsService
+
+        async with db.get_session() as session:
+            match = await session.get(Match, old_season_data["match"].id)
+            match.completed_at = datetime.utcnow()
+            mps = (
+                await session.execute(
+                    select(MatchPlayer)
+                    .where(MatchPlayer.match_id == match.id)
+                    .order_by(MatchPlayer.side)
+                )
+            ).scalars().all()
+            mps[0].goals = 3
+            mps[0].is_winner = True
+            mps[1].goals = 1
+            await session.commit()
+
+            player = await PlayerRepository(session).get_by_discord_id(2000)
+            player_id = player.id
+
+        await SeasonService().create_season(2)
+
+        stats = await PlayerStatsService().get_stats(player_id, 1)
+        assert stats.open_state is OpenState.PLAYED
+        assert stats.open.games == 1
+        assert stats.open.wins == 1
+        assert stats.open.goals_for == 3
+        assert stats.open.goals_against == 1
 
     async def test_state_reset_on_create(self, db, old_season_data):
         from bot.config import Config
@@ -156,23 +199,25 @@ class TestSeasonPurge:
 
     async def test_same_number_returns_false_unchanged(self, db, old_season_data):
         svc = SeasonService()
-        # Reactivating season 1 itself → no purge of its own data
         assert await svc.create_season(1) is False
 
-    async def test_purged_players_allow_dummy_reuse(self, db, old_season_data):
-        """After purge, dummy IDs freed; new dummies start fresh."""
-        svc = SeasonService()
+    async def test_dummy_ids_continue_after_archived_dummies(self, db, old_season_data):
+        """Archived players keep their IDs, so new dummies continue after them."""
         dev = DevService()
-        await svc.create_season(2)
-
-        start = await dev.next_dummy_start()
-        assert start == DUMMY_ID_BASE
-
-        ok, _ = await dev.dummy_register(2, DUMMY_ID_BASE, "Dummy0001", "us")
+        ok, _ = await dev.dummy_register(1, DUMMY_ID_BASE, "Dummy0001", "us")
         assert ok
 
-        # next call continues after the existing dummy
+        await SeasonService().create_season(2)
+
         assert await dev.next_dummy_start() == DUMMY_ID_BASE + 1
+
+    async def test_unplayed_matches_are_season_scoped(self, db, old_season_data):
+        """An abandoned old season must not block the current one."""
+        async with db.get_session() as session:
+            player = await PlayerRepository(session).get_by_discord_id(2000)
+            repo = MatchPlayerRepository(session)
+            assert await repo.get_unplayed_player_matches(player.id, season=1)
+            assert await repo.get_unplayed_player_matches(player.id, season=2) == []
 
 
 class TestNextDummyStart:
