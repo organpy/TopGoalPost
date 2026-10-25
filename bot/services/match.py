@@ -335,9 +335,10 @@ class MatchService:
             await session.commit()
 
     async def _set_state(self, state: str) -> None:
-        from bot.config import Config
+        # Score corrections rewind the stage; that is a deliberate reset.
+        from bot.services.season import SeasonService
 
-        await Config().set_season_state(state)
+        await SeasonService().advance_state(state, force=True)
 
     async def _reset_after_open_edit(self, season: int) -> None:
         """Open edits can change Playin pools and everything downstream."""

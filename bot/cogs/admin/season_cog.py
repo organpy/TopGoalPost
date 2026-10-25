@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from bot.cogs.checks import require_host
-from bot.services.season import SeasonService
+from bot.services.season import SeasonService, STATE_ORDER, transition_error
 from bot.db import get_db_manager, PlayerSeason, SeasonStatus
 from bot.config import Config
 
@@ -67,27 +67,32 @@ class SeasonAdminCog(commands.Cog):
         else:
             await ctx.send(f"Season {number} already exists.")
 
-    @season_group.command(name="advance", help="Advance the season state (SIGNUP, OPEN, PLAYIN, SWISS, PLAYOFF, OFFSEASON)")
+    @season_group.command(
+        name="advance",
+        help="Advance to the next season state. Add `force` to jump or rewind.",
+    )
     @require_host()
-    async def advance_cmd(self, ctx: commands.Context, state: str):
-        valid_states = ["SIGNUP", "OPEN", "PLAYIN", "SWISS", "PLAYOFF", "OFFSEASON"]
-        if state.upper() not in valid_states:
-            await ctx.send(f"Invalid state. Must be one of: {', '.join(valid_states)}")
-            return
+    async def advance_cmd(self, ctx: commands.Context, state: str, force: str = ""):
+        await ctx.send(await self.advance_message(state, force.lower() == "force"))
 
-        success = await self.season_service.advance_state(state.upper())
-        if success:
-            msg = f"Season state advanced to: **{state.upper()}**"
-            if state.upper() == "PLAYIN":
-                msg += (
-                    "\n⚠️ This does **not** create playin matches. "
-                    "Run `/tourney start_playins` or dashboard **Start Playins** after Open is scored."
-                )
-            elif state.upper() == "OPEN":
-                msg += "\nGenerate matches with `/tourney generate_open` if you have not already."
-            await ctx.send(msg)
-        else:
-            await ctx.send("Failed to advance state.")
+    async def advance_message(self, state: str, force: bool = False) -> str:
+        """Apply a state change and describe the result (shared by prefix/slash)."""
+        target = state.upper()
+        current = await self.season_service.get_state()
+        error = transition_error(current, target)
+        if error and (not force or target not in STATE_ORDER):
+            return error
+
+        await self.season_service.advance_state(target, force=force)
+        msg = f"Season state: **{current} → {target}**" + (" (forced)" if error else "")
+        if target == "PLAYIN":
+            msg += (
+                "\n⚠️ This does **not** create playin matches. "
+                "Run `/tourney start_playins` or dashboard **Start Playins** after Open is scored."
+            )
+        elif target == "OPEN":
+            msg += "\nGenerate matches with `/tourney generate_open` if you have not already."
+        return msg
 
     @commands.command(name="playerlist", help="View all registered players")
     @require_host()

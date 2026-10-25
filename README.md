@@ -76,8 +76,10 @@ OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → (season ends)
 | `PLAYOFF` | `/tourney generate_playoffs` | 16-player double-elimination BO3 bracket | `/playoff`, `/report` |
 
 The season state is stored in the `settings` DB table (key `stage`).
-The `SeasonService` enforces **sequential forward** advancement and
-**backwards resets** to OFFSEASON.
+The `SeasonService` enforces the legal path
+`OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → OFFSEASON`.
+Skips and backward jumps are refused unless forced
+(`!season advance <STATE> force`), which is logged.
 
 Use `!season status` at any time to see the current season and state.
 Use `/tourney status` for the recommended next step.

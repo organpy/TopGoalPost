@@ -3,6 +3,7 @@
 Handles season lifecycle: creation, advancing stages, archiving.
 """
 
+import logging
 from typing import Optional
 
 from bot.db import (
@@ -16,7 +17,38 @@ from bot.db import (
 from bot.config import Config
 from bot.rendering import ASSETS_ROOT
 
+logger = logging.getLogger(__name__)
+
 STATE_ORDER = ["OFFSEASON", "SIGNUP", "OPEN", "PLAYIN", "SWISS", "PLAYOFF"]
+
+# Legal forward moves. Anything else (skips, backward jumps) needs force=True.
+TRANSITIONS = {
+    "OFFSEASON": "SIGNUP",
+    "SIGNUP": "OPEN",
+    "OPEN": "PLAYIN",
+    "PLAYIN": "SWISS",
+    "SWISS": "PLAYOFF",
+    "PLAYOFF": "OFFSEASON",
+}
+
+
+def next_state(state: str) -> Optional[str]:
+    """The only state reachable from ``state`` without force."""
+    return TRANSITIONS.get(state.upper())
+
+
+def transition_error(current: str, new_state: str) -> Optional[str]:
+    """Why ``current -> new_state`` is illegal, or None when it is allowed."""
+    new_upper = new_state.upper()
+    if new_upper not in STATE_ORDER:
+        return f"Unknown state `{new_state}`. Valid: {', '.join(STATE_ORDER)}."
+    if new_upper == current or TRANSITIONS.get(current) == new_upper:
+        return None
+    allowed = TRANSITIONS.get(current)
+    return (
+        f"Cannot move from {current} to {new_upper}. "
+        f"Next allowed state is {allowed}; use force to override."
+    )
 
 
 class SeasonService:
@@ -81,9 +113,7 @@ class SeasonService:
 
         await self._clear_generated_assets()
 
-        # Reset state to offseason
-        config = Config()
-        await config.set_season_state("OFFSEASON")
+        await self.advance_state("OFFSEASON", force=True)
         return True
 
     async def get_season(self, number: int) -> Optional[Season]:
@@ -109,20 +139,28 @@ class SeasonService:
                 except OSError:
                     pass
 
-    async def advance_state(self, new_state: str) -> bool:
-        """Advance the season state.
-        
-        Typically OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF.
-        Currently allows jumping to any valid state to prevent locking the admin.
+    async def advance_state(self, new_state: str, force: bool = False) -> bool:
+        """Move the season state along the legal path.
+
+        OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → OFFSEASON.
+        Re-entering the current state is a no-op. ``force`` allows any valid
+        state and is reserved for explicit admin overrides and reset paths.
         """
         state_upper = new_state.upper()
         if state_upper not in STATE_ORDER:
             return False
 
         config = Config()
+        current = await config.get_season_state()
+        error = transition_error(current, state_upper)
+        if error and not force:
+            return False
+        if error:
+            logger.warning("Forced season state %s -> %s", current, state_upper)
+
         await config.set_season_state(state_upper)
         return True
-    
+
     async def get_state(self) -> str:
         """Get the current season state."""
         config = Config()

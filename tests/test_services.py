@@ -29,12 +29,18 @@ class TestSeasonService:
         assert await svc.advance_state("SWISS") is True
         assert await svc.advance_state("PLAYOFF") is True
 
-    async def test_skip_stage_succeeds(self, db):
+    async def test_skip_stage_fails(self, db):
         from bot.services.season import SeasonService
         svc = SeasonService()
 
-        # We changed advance_state to allow skipping stages
-        assert await svc.advance_state("OPEN") is True
+        assert await svc.advance_state("OPEN") is False
+        assert await svc.get_state() == "OFFSEASON"
+
+    async def test_skip_stage_with_force(self, db):
+        from bot.services.season import SeasonService
+        svc = SeasonService()
+
+        assert await svc.advance_state("OPEN", force=True) is True
         assert await svc.get_state() == "OPEN"
 
     async def test_advance_backwards_fails(self, db):
@@ -42,26 +48,48 @@ class TestSeasonService:
         svc = SeasonService()
 
         await svc.advance_state("SIGNUP")
-        # Going backwards from SIGNUP to OFFSEASON should fail
-        assert await svc.advance_state("OFFSEASON") is True  # reset always allowed
+        await svc.advance_state("OPEN")
+        assert await svc.advance_state("SIGNUP") is False
+        assert await svc.advance_state("OFFSEASON") is False
+        assert await svc.advance_state("SIGNUP", force=True) is True
+        assert await svc.get_state() == "SIGNUP"
+
+    async def test_same_state_is_noop(self, db):
+        from bot.services.season import SeasonService
+        svc = SeasonService()
+
+        assert await svc.advance_state("OFFSEASON") is True
 
     async def test_invalid_state_fails(self, db):
         from bot.services.season import SeasonService
         svc = SeasonService()
 
         assert await svc.advance_state("INVALID") is False
+        assert await svc.advance_state("INVALID", force=True) is False
 
-    async def test_reset_to_offseason(self, db):
+    async def test_playoff_closes_to_offseason(self, db):
         from bot.services.season import SeasonService
         svc = SeasonService()
 
-        await svc.advance_state("SIGNUP")
-        await svc.advance_state("OPEN")
-        # Reset to OFFSEASON always works
-        assert await svc.advance_state("OFFSEASON") is True
-        assert await svc.get_state() == "OFFSEASON"
-        # Can now advance again from OFFSEASON
+        for state in ("SIGNUP", "OPEN", "PLAYIN", "SWISS", "PLAYOFF", "OFFSEASON"):
+            assert await svc.advance_state(state) is True
         assert await svc.advance_state("SIGNUP") is True
+
+    async def test_reset_path_rewinds_stage(self, db):
+        from bot.services.match import MatchService
+        from bot.services.season import SeasonService
+        svc = SeasonService()
+
+        await svc.advance_state("SWISS", force=True)
+        await MatchService()._set_state("OPEN")
+        assert await svc.get_state() == "OPEN"
+
+    async def test_transition_error_message(self):
+        from bot.services.season import transition_error
+
+        assert transition_error("SIGNUP", "OPEN") is None
+        assert "Next allowed state is OPEN" in transition_error("SIGNUP", "SWISS")
+        assert "Unknown state" in transition_error("SIGNUP", "NOPE")
 
     async def test_current_season_prefers_active_row(self, db):
         from bot.services.season import SeasonService
