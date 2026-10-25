@@ -135,7 +135,7 @@ class PlayerCog(commands.Cog):
         if stats and stats.has_data:
             lines = [
                 f"**Open:** {stats.open_summary}",
-                f"**Play-in:** {stats.record_summary(stats.playin)}",
+                f"**Playin:** {stats.record_summary(stats.playin)}",
                 f"**Swiss:** {stats.record_summary(stats.swiss)}",
                 f"**Playoff:** {stats.record_summary(stats.playoff)}",
             ]

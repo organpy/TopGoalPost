@@ -68,9 +68,9 @@ OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → (season ends)
 
 | Stage | Admin move | What happens | Player view |
 |-------|------------|--------------|-------------|
-| `OFFSEASON` | `!season create N` | Archive the old season and create the next one | `/seasons` |
-| `SIGNUP` | `!season advance SIGNUP` | Registration opens | `/signup`, `/status` |
-| `OPEN` | `!season advance OPEN` → `/tourney generate_open` | Four Open matches per player | `/open`, `/report` |
+| `OFFSEASON` | `/season create N` | Archive the old season and create the next one | `/seasons` |
+| `SIGNUP` | `/season advance SIGNUP` | Registration opens | `/signup`, `/status` |
+| `OPEN` | `/tourney generate_open` (advances SIGNUP → OPEN) | Four Open matches per player | `/open`, `/report` |
 | `PLAYIN` | `/tourney start_playins` | Auto-advancing qualifier ladder | `/playins`, `/report` |
 | `SWISS` | `/tourney swiss_round` | 66-match survival ladder | `/swiss`, `/report` |
 | `PLAYOFF` | `/tourney generate_playoffs` | 16-player double-elimination BO3 bracket | `/playoff`, `/report` |
@@ -79,9 +79,11 @@ The season state is stored in the `settings` DB table (key `stage`).
 The `SeasonService` enforces the legal path
 `OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → OFFSEASON`.
 Skips and backward jumps are refused unless forced
-(`!season advance <STATE> force`), which is logged.
+(`/season advance <STATE> force:True`), which is logged. Stage actions
+(`/tourney generate_open`, `start_playins`, `swiss_round`, `generate_playoffs`)
+generate first and only advance the state when generation succeeds.
 
-Use `!season status` at any time to see the current season and state.
+Use `/season status` at any time to see the current season and state.
 Use `/tourney status` for the recommended next step.
 
 > **Prefix vs slash:** Admin-only commands use `!` (type as text in chat —
@@ -95,8 +97,8 @@ Use `/tourney status` for the recommended next step.
 <summary><strong>1. Create a season</strong> — start the next season</summary>
 
 ```
-!season create 12          # starts Season 12 in OFFSEASON
-!season advance SIGNUP     # open signups
+/season create 12          # starts Season 12 in OFFSEASON
+/season advance SIGNUP     # open signups
 ```
 
 </details>
@@ -146,8 +148,7 @@ matches exist. The dashboard has a **Skip Open** button for the same list.
 Each non-skip player plays 4 opponents. Life points: start at 4, lose 1 per loss.
 
 ```
-!season advance OPEN       # required before generating
-/tourney generate_open     # creates 4 matches per player
+/tourney generate_open     # creates 4 matches per player, then SIGNUP → OPEN
 ```
 
 Players report scores:
@@ -251,6 +252,10 @@ If every entrant already has four wins, no ladder cards are created; those
 players auto-qualify and the next step becomes Swiss.
 `/tourney finish_playins` remains available as a manual retry.
 
+**Glossary.** *HP* (life points) starts at 4 in Open and drops by 1 per loss.
+*CUT* is the extra Playin round created only when R3 produces more qualifiers
+than the 32-player Swiss field can take.
+
 </details>
 
 <details>
@@ -324,13 +329,15 @@ the reset card if one is played.
 > Expand a command group to see its table.
 
 <details>
-<summary><strong><code>!season</code> — admin prefix</strong></summary>
+<summary><strong><code>/season</code> — host slash lifecycle</strong></summary>
 
 | Command | Description |
 |---------|-------------|
-| `!season status` | Current season number + state |
-| `!season create N` | Create Season N (archives the current season, history kept) |
-| `!season advance OFFSEASON\|SIGNUP\|OPEN\|PLAYIN\|SWISS\|PLAYOFF` | Advance state machine |
+| `/season status` | Current season number, state and next state |
+| `/season create N` | Create Season N (archives the current season, history kept) |
+| `/season advance STATE [force]` | Move to the next state; `force` skips/rewinds (logged) |
+
+`!season status|create|advance` remain as prefix equivalents.
 
 </details>
 
@@ -456,7 +463,7 @@ target any member without a shared match.
 |---------|-------------|
 | `!season status` | Current season number and state |
 | `!season create N` | Create Season N (archives the current season, history kept) |
-| `!season advance STATE` | Advance the state machine |
+| `!season advance STATE [force]` | Advance the state machine |
 | `!set_config key value` | Set a config value |
 | `!remove_config key` | Delete a config value |
 | `!playerlist` | List all registered players |
@@ -520,7 +527,7 @@ All config lives in the `settings` DB table (flat key–value). Set via
 
 <p id="season-archive"><img src="repopng/TPGarchive.png" alt="Season archive" width="250"></p>
 
-Ending a season never deletes it. `!season create N`:
+Ending a season never deletes it. `/season create N`:
 
 1. Archives the current active season (`ended_at` is stamped)
 2. Creates Season N and resets the state machine to `OFFSEASON`
@@ -529,7 +536,7 @@ Ending a season never deletes it. `!season create N`:
 Events, matches, registrations, stats and player avatars stay in the database,
 so old brackets and player records remain viewable forever. Archived seasons
 are read-only: a season number can never be reused or reopened
-(`!season create N` refuses any number that already exists).
+(`/season create N` refuses any number that already exists).
 
 Every bracket command takes an optional `season:` (defaults to the active
 season), and renders are written per season (`open_s3.png`, `playin_s3.png`,

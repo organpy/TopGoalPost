@@ -1689,3 +1689,44 @@ class TestStageActionParity:
         view = DashboardView(mock_bot, MagicMock())
         labels = [item.label for item in view.children]
         assert sum("Playins" in label and "Finish" not in label for label in labels) == 1
+
+
+def test_bot_messages_reference_existing_commands():
+    """Every `/cmd` or `!cmd` mentioned in bot copy must be a registered command."""
+    import importlib
+    import re
+    from pathlib import Path
+
+    from discord import app_commands
+    from discord.ext import commands
+
+    modules = [
+        "bot.cogs.admin.season_cog", "bot.cogs.admin.admin_cog", "bot.cogs.admin.dev_cog",
+        "bot.cogs.admin.player_cog", "bot.cogs.signup.signup_cog",
+        "bot.cogs.matches.match_cog", "bot.cogs.tournament.tournament_cog",
+        "bot.cogs.scheduling.schedule_cog", "bot.cogs.standings.standings_cog",
+        "bot.cogs.standings.stats_cog", "bot.ui.dashboard",
+    ]
+    slash, prefix = set(), {"help"}
+    for name in modules:
+        for obj in vars(importlib.import_module(name)).values():
+            if not (isinstance(obj, type) and issubclass(obj, commands.Cog)):
+                continue
+            for cmd in obj.__cog_app_commands__:
+                slash.add(cmd.name)
+                if isinstance(cmd, app_commands.Group):
+                    slash.update(f"{cmd.name} {sub.name}" for sub in cmd.commands)
+            prefix.update(c.qualified_name for c in obj.__cog_commands__)
+
+    root = Path(__file__).resolve().parents[1] / "bot"
+    missing = []
+    for path in root.rglob("*.py"):
+        for m in re.finditer(r"`([/!])([a-z_]+)( [a-z_]+)?", path.read_text()):
+            kind, base, sub = m.group(1), m.group(2), (m.group(3) or "").strip()
+            pool = slash if kind == "/" else prefix
+            full = f"{base} {sub}".strip()
+            if full not in pool and base not in pool:
+                missing.append(f"{path.name}: {kind}{full}")
+            elif sub and base in {"season", "tourney"} and full not in pool:
+                missing.append(f"{path.name}: {kind}{full}")
+    assert missing == []

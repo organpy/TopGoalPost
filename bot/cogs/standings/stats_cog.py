@@ -154,7 +154,7 @@ class StatsCog(commands.Cog):
 
         embed.add_field(name="Open", value=stats.open_summary, inline=False)
         embed.add_field(
-            name="Play-in",
+            name="Playin",
             value=self._stage_line(stats, "PLAYIN", stats.playin),
             inline=True,
         )
