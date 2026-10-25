@@ -477,7 +477,7 @@ target any member without a shared match.
 | `!sync_hp` | Rebuild open HP/stats |
 | `!getleaderboard N` | Mention the top N open players |
 | `!unthreadedgames` | List matches without scheduling threads |
-| `!dummy_add N` | Add N dummy players to current season (dev) |
+| `!dummy_add N` | Add N dummy players to current season (dev mode only) |
 | `!dummy_score` | Randomly score all unplayed matches (dev) |
 | `!dummy_replace OLD NEW` | Change a player's Discord ID (dev) |
 
@@ -608,6 +608,10 @@ python scripts/seed_dummy_players.py
 ```
 
 Then point `DATABASE_URL` in `.env` to `sqlite+aiosqlite:///data/my_season.db`.
+
+The `!dummy_*` commands are only loaded in dev mode. Set `ENV=dev` (or
+`LOAD_DEV_COGS=1`) together with a separate `DATABASE_URL`; production
+startups never load them.
 
 <p id="db-migrations"><img src="repopng/TPGdb.png" alt="Database migrations" width="275"></p>
 

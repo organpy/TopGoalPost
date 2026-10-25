@@ -34,6 +34,30 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!")
 
 
+COGS = [
+    "bot.cogs.admin.season_cog",
+    "bot.cogs.admin.admin_cog",
+    "bot.cogs.admin.player_cog",
+    "bot.cogs.signup.signup_cog",
+    "bot.cogs.matches.match_cog",
+    "bot.cogs.tournament.tournament_cog",
+    "bot.cogs.scheduling.schedule_cog",
+    "bot.cogs.standings.standings_cog",
+    "bot.cogs.standings.stats_cog",
+    "bot.ui.dashboard",
+]
+DEV_COGS = ["bot.cogs.admin.dev_cog"]
+
+
+def dev_mode(env=os.environ) -> bool:
+    """Dummy-data commands load only with ENV=dev or LOAD_DEV_COGS=1."""
+    return env.get("ENV", "").lower() == "dev" or env.get("LOAD_DEV_COGS", "") in ("1", "true")
+
+
+def select_cogs(env=os.environ) -> list[str]:
+    return COGS + (DEV_COGS if dev_mode(env) else [])
+
+
 class TopGoalPostBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -58,19 +82,9 @@ class TopGoalPostBot(commands.Bot):
         await config.init_defaults()
         
         logger.info("Loading cogs...")
-        cogs = [
-            "bot.cogs.admin.season_cog",
-            "bot.cogs.admin.admin_cog",
-            "bot.cogs.admin.dev_cog",
-            "bot.cogs.admin.player_cog",
-            "bot.cogs.signup.signup_cog",
-            "bot.cogs.matches.match_cog",
-            "bot.cogs.tournament.tournament_cog",
-            "bot.cogs.scheduling.schedule_cog",
-            "bot.cogs.standings.standings_cog",
-            "bot.cogs.standings.stats_cog",
-            "bot.ui.dashboard",
-        ]
+        cogs = select_cogs()
+        if dev_mode():
+            logger.warning("Dev mode: loading dummy-data commands. Use a separate database.")
         for cog in cogs:
             await self.load_extension(cog)
 
