@@ -181,6 +181,34 @@ class TestSeasonAdminCog:
                     mock_copy.assert_called_once()
 
 
+    def test_slash_season_group_has_subcommands(self, mock_bot):
+        cog = SeasonAdminCog(mock_bot)
+        group = next(c for c in cog.__cog_app_commands__ if c.name == "season")
+        assert {c.name for c in group.commands} == {"status", "create", "advance"}
+        assert group.default_permissions is None
+
+    async def test_slash_advance_illegal_transition(self, mock_interaction, mock_bot, db):
+        from discord import app_commands
+
+        cog = SeasonAdminCog(mock_bot)
+        await cog.slash_advance.callback(
+            cog, mock_interaction, app_commands.Choice(name="SWISS", value="SWISS")
+        )
+        msg = mock_interaction.response.send_message.call_args[0][0]
+        assert "Next allowed state is SIGNUP" in msg
+
+    async def test_slash_advance_force(self, mock_interaction, mock_bot, db):
+        from discord import app_commands
+
+        cog = SeasonAdminCog(mock_bot)
+        await cog.slash_advance.callback(
+            cog, mock_interaction, app_commands.Choice(name="SWISS", value="SWISS"), True
+        )
+        msg = mock_interaction.response.send_message.call_args[0][0]
+        assert "OFFSEASON → SWISS** (forced)" in msg
+        assert await cog.season_service.get_state() == "SWISS"
+
+
 class TestMatchCog:
     """Verify match cog validates participants."""
 

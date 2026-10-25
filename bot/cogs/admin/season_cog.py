@@ -12,13 +12,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from bot.utils.errors import error_message, log_error
-from bot.cogs.checks import require_host
-from bot.services.season import SeasonService, STATE_ORDER, transition_error
+from bot.cogs.checks import require_host, require_host_app
+from bot.services.season import SeasonService, STATE_ORDER, next_state, transition_error
 from bot.db import get_db_manager, PlayerSeason, SeasonStatus
 from bot.config import Config
 
 
+STATE_CHOICES = [app_commands.Choice(name=state, value=state) for state in STATE_ORDER]
+
+
 class SeasonAdminCog(commands.Cog):
+    season = app_commands.Group(name="season", description="Season lifecycle (host)")
+
     def __init__(self, bot):
         self.bot = bot
         self.db = get_db_manager()
@@ -33,6 +38,9 @@ class SeasonAdminCog(commands.Cog):
     @season_group.command(name="status", help="Check current season status")
     @require_host()
     async def status_cmd(self, ctx: commands.Context):
+        await ctx.send(embed=await self.status_embed())
+
+    async def status_embed(self) -> discord.Embed:
         season_num = await self.season_service.get_current_season_number()
         state = await self.season_service.get_state()
 
@@ -40,33 +48,32 @@ class SeasonAdminCog(commands.Cog):
         if season_num:
             embed.add_field(name="Current Season", value=f"Season {season_num}", inline=False)
             embed.add_field(name="State", value=state, inline=False)
+            nxt = next_state(state)
+            if nxt:
+                embed.add_field(name="Next state", value=nxt, inline=False)
         else:
-            embed.description = "No active season exists."
-
-        await ctx.send(embed=embed)
+            embed.description = "No active season. Run `/season create <N>`."
+        return embed
 
     @season_group.command(name="create", help="Create a new season (archives the current one, history is kept)")
     @require_host()
     async def create_cmd(self, ctx: commands.Context, number: int):
+        await ctx.send(await self.create_message(number))
+
+    async def create_message(self, number: int) -> str:
         existing = await self.season_service.get_season(number)
         if existing:
             if existing.status == SeasonStatus.ARCHIVED:
-                await ctx.send(
-                    f"Season {number} is archived and read-only. "
-                    "Pick a new season number."
-                )
-            else:
-                await ctx.send(f"Season {number} is already active.")
-            return
+                return f"Season {number} is archived and read-only. Pick a new season number."
+            return f"Season {number} is already active."
 
-        success = await self.season_service.create_season(number)
-        if success:
-            await ctx.send(
-                f"Successfully created Season {number} and set state to OFFSEASON. "
-                "Previous seasons stay available in `/seasons`."
+        if await self.season_service.create_season(number):
+            return (
+                f"Created Season {number} and set state to OFFSEASON. "
+                "Previous seasons stay available in `/seasons`. "
+                "Next: `/season advance SIGNUP`."
             )
-        else:
-            await ctx.send(f"Season {number} already exists.")
+        return f"Season {number} already exists."
 
     @season_group.command(
         name="advance",
@@ -94,6 +101,35 @@ class SeasonAdminCog(commands.Cog):
         elif target == "OPEN":
             msg += "\nGenerate matches with `/tourney generate_open` if you have not already."
         return msg
+
+    @season.command(name="status", description="Current season, state and next state")
+    @require_host_app()
+    async def slash_status(self, interaction: discord.Interaction):
+        await interaction.response.send_message(embed=await self.status_embed(), ephemeral=True)
+
+    @season.command(name="create", description="Create a new season (archives the current one)")
+    @app_commands.describe(number="New season number (never reuse an archived one)")
+    @require_host_app()
+    async def slash_create(self, interaction: discord.Interaction, number: app_commands.Range[int, 1]):
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(await self.create_message(number), ephemeral=True)
+
+    @season.command(name="advance", description="Move to the next season state")
+    @app_commands.describe(
+        state="Target state (normally the next one)",
+        force="Allow skipping or rewinding stages (logged)",
+    )
+    @app_commands.choices(state=STATE_CHOICES)
+    @require_host_app()
+    async def slash_advance(
+        self,
+        interaction: discord.Interaction,
+        state: app_commands.Choice[str],
+        force: bool = False,
+    ):
+        await interaction.response.send_message(
+            await self.advance_message(state.value, force), ephemeral=True
+        )
 
     @commands.command(name="playerlist", help="View all registered players")
     @require_host()
