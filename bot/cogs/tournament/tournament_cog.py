@@ -11,17 +11,12 @@ from bot.services.pairing import PairingService
 from bot.services.playin import PlayinService
 from bot.services.match import MatchService
 from bot.services.signup import SignupService
-from bot.services.tournament_flow import TournamentFlowService
+from bot.services.tournament_flow import TournamentFlowService, STAGE_EVENTS
 from bot.db import get_db_manager, MatchRepository, PlayerRepository, EventType, EventRepository
 from bot.ui.autocomplete import player_list_autocomplete
 
 
-STAGE_EVENT_TYPES = {
-    "OPEN": EventType.OPEN,
-    "PLAYIN": EventType.PLAYIN,
-    "SWISS": EventType.SWISS,
-    "PLAYOFF": EventType.PLAYOFF,
-}
+STAGE_EVENT_TYPES = STAGE_EVENTS
 
 
 def _split_groups(player_ids: list[int]) -> list[list[int]]:
@@ -297,13 +292,16 @@ class TournamentCog(commands.Cog):
             lines.append("\n".join(errors))
         await ctx.send("\n".join(lines))
 
-    async def _playin_impl(self, ctx, round_num=None):
+    async def _playin_impl(self, ctx):
         await self._stage_prefix(ctx, self.flow_service.start_playins)
 
-    @tourney_group.command(name="generate_playin", help="Run Playins round (1, 2, or 3)")
+    @tourney_group.command(
+        name="generate_playin",
+        help="Finish Open and create the complete Playin ladder (all rounds at once)",
+    )
     @require_host()
-    async def playin_cmd(self, ctx: commands.Context, round_num: int):
-        await self._playin_impl(ctx, round_num)
+    async def playin_cmd(self, ctx: commands.Context):
+        await self._playin_impl(ctx)
 
     @tourney_group.command(name="finish_playins", help="Finalize Playins qualifiers")
     @require_host()

@@ -131,8 +131,8 @@ class DashboardView(discord.ui.View):
     async def gen_open(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._run_stage(interaction, self.flow_service.start_open)
 
-    @discord.ui.button(label="Playins", style=discord.ButtonStyle.primary, emoji="⚔️", row=0)
-    async def gen_playin(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Start Playins", style=discord.ButtonStyle.primary, emoji="⚔️", row=0)
+    async def start_playins(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._run_stage(interaction, self.flow_service.start_playins)
 
     @discord.ui.button(label="Start Swiss", style=discord.ButtonStyle.primary, emoji="🇨🇭", row=0)
@@ -165,10 +165,6 @@ class DashboardView(discord.ui.View):
             f"Open stats synced for {result['players_synced']} players. Wins: `{result.get('win_distribution')}`",
             ephemeral=True,
         )
-
-    @discord.ui.button(label="Start Playins", style=discord.ButtonStyle.success, emoji="⚔️", row=1)
-    async def start_playins(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._run_stage(interaction, self.flow_service.start_playins)
 
     @discord.ui.button(label="Skip Open", style=discord.ButtonStyle.secondary, emoji="⏭️", row=1)
     async def skip_open(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -413,7 +409,7 @@ class DashboardCog(commands.Cog):
                 embed.add_field(name="Channels", value=f"Match: {mcs}\nScore: {scs}", inline=True)
                 embed.add_field(
                     name="Stage Actions",
-                    value="Row 0: generate · Row 1: **Next Step / Sync Open / Start Playins**\nPlayin ladder is pre-created; a CUT round appears only if needed · Swiss is fixed at 32",
+                    value="Row 0: **Open / Start Playins / Start Swiss / Playoffs** · Row 1: **Next Step / Sync Open**\nPlayin ladder is pre-created; a CUT round appears only if needed · Swiss is fixed at 32",
                     inline=False,
                 )
 

@@ -1908,6 +1908,35 @@ class TestGenerateBeforeAdvance:
         flow.pairing_service.generate_swiss_round.assert_not_awaited()
 
 
+class TestReadiness:
+    async def test_open_with_unplayed_is_blocked(self, db, seed_data):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await Config().set_season_state("OPEN")
+        async with db.get_session() as session:
+            event = await EventRepository(session).create("Open", EventType.OPEN, 1)
+            await MatchRepository(session).create(event.id)
+            await session.commit()
+
+        ready = await TournamentFlowService().readiness(1)
+
+        assert ready["action"] == "start_playins"
+        assert ready["next_state"] == "PLAYIN"
+        assert ready["ready"] is False
+        assert "1 OPEN match(es) unplayed." in ready["blockers"]
+
+    async def test_signup_with_players_is_ready(self, db, seed_data):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await Config().set_season_state("SIGNUP")
+        ready = await TournamentFlowService().readiness(1)
+
+        assert ready["ready"] is True
+        assert ready["action"] == "start_open"
+
+
 class TestResultSummary:
     async def test_bo1_summary_has_stage_players_and_score(self, db, seed_data):
         from bot.services.match import MatchService

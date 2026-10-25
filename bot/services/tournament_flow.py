@@ -14,7 +14,7 @@ from bot.db import (
     EventRepository,
     MatchRepository,
 )
-from bot.services.season import SeasonService, STATE_ORDER
+from bot.services.season import SeasonService, next_state
 from bot.services.match import MatchService
 from bot.services.playin import PlayinService
 from bot.services.pairing import PairingService
@@ -32,6 +32,14 @@ def cut_notice(layout: dict) -> str:
         f"Predicted CUT: {cut} match(es) ({players} players) — "
         "R3 would overproduce the 32-player Swiss field."
     )
+
+
+STAGE_EVENTS = {
+    "OPEN": EventType.OPEN,
+    "PLAYIN": EventType.PLAYIN,
+    "SWISS": EventType.SWISS,
+    "PLAYOFF": EventType.PLAYOFF,
+}
 
 
 class TournamentFlowService:
@@ -80,12 +88,52 @@ class TournamentFlowService:
         return {
             "season": season,
             "state": state,
+            "readiness": await self.readiness(season),
             "stages": stage_counts,
             "playin_layout": layout,
             "playin_cut_notice": cut_notice(layout),
             "playin_rounds": playin_rounds,
             "playin_started": playin_started,
             "next_action": next_action,
+        }
+
+    async def readiness(self, season: int) -> dict[str, Any]:
+        """What blocks the next stage action. Shared by status, dashboard and gates."""
+        state = await self.season_service.get_state()
+        blockers: list[str] = []
+        action = None
+        if state == "SIGNUP":
+            action = "start_open"
+            async with self.db.get_session() as session:
+                registered = (
+                    await session.execute(
+                        select(func.count()).select_from(PlayerSeason).where(
+                            PlayerSeason.season_number == season
+                        )
+                    )
+                ).scalar() or 0
+            if registered < 2:
+                blockers.append(f"Only {registered} player(s) registered.")
+        elif state in ("OPEN", "PLAYIN", "SWISS"):
+            action = {"OPEN": "start_playins", "PLAYIN": "start_swiss", "SWISS": "start_playoffs"}[state]
+            counts = await self._event_match_counts(season, STAGE_EVENTS[state])
+            if counts["total"] == 0 and state != "PLAYIN":
+                blockers.append(f"No {state} matches generated yet.")
+            if counts["unplayed"]:
+                blockers.append(f"{counts['unplayed']} {state} match(es) unplayed.")
+            if state == "PLAYIN" and not await self._event_exists(season, EventType.PLAYIN):
+                blockers.append("Playin ladder not created yet.")
+        elif state == "PLAYOFF":
+            action = "close_season"
+            counts = await self._event_match_counts(season, EventType.PLAYOFF)
+            if counts["unplayed"]:
+                blockers.append(f"{counts['unplayed']} playoff match(es) unplayed.")
+        return {
+            "state": state,
+            "next_state": next_state(state),
+            "action": action,
+            "ready": action is not None and not blockers,
+            "blockers": blockers,
         }
 
     async def sync_open_stats(self, season: int) -> dict[str, Any]:

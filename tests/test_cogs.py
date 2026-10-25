@@ -1606,3 +1606,58 @@ class TestConfirmActionView:
 
         assert view.value is None
         assert all(child.disabled for child in view.children)
+
+
+class TestStageActionParity:
+    """Prefix, slash and dashboard stage actions all call the same flow method."""
+
+    @pytest.mark.parametrize(
+        "prefix_impl, slash_name, button, flow_method",
+        [
+            ("_open_impl", "slash_generate_open", "gen_open", "start_open"),
+            ("_playin_impl", "slash_start_playins", "start_playins", "start_playins"),
+            ("_swiss_impl", "slash_swiss_round", "gen_swiss", "start_swiss"),
+            ("_playoff_impl", "slash_generate_playoffs", "seed_playoff", "start_playoffs"),
+        ],
+    )
+    async def test_surfaces_share_flow_method(
+        self, mock_ctx, mock_bot, prefix_impl, slash_name, button, flow_method
+    ):
+        from bot.ui.dashboard import DashboardView
+
+        result = {"ok": True, "state": "X", "advanced_from": None, "message": "m"}
+
+        cog = TournamentCog(mock_bot)
+        cog.season_service.get_current_season_number = AsyncMock(return_value=1)
+        setattr(cog.flow_service, flow_method, AsyncMock(return_value=result))
+        await getattr(cog, prefix_impl)(mock_ctx)
+        getattr(cog.flow_service, flow_method).assert_awaited_once()
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+        setattr(cog.flow_service, flow_method, AsyncMock(return_value=result))
+        await getattr(cog, slash_name).callback(cog, interaction)
+        getattr(cog.flow_service, flow_method).assert_awaited_once()
+
+        mock_bot.get_cog = MagicMock(return_value=cog)
+        view = DashboardView(mock_bot, MagicMock())
+        view.season_service.get_current_season_number = AsyncMock(return_value=1)
+        setattr(view.flow_service, flow_method, AsyncMock(return_value=result))
+        await getattr(view, button).callback(interaction)
+        getattr(view.flow_service, flow_method).assert_awaited_once()
+
+    def test_generate_playin_has_no_ignored_round_arg(self, mock_bot):
+        import inspect
+
+        cog = TournamentCog(mock_bot)
+        params = inspect.signature(cog.playin_cmd.callback).parameters
+        assert "round_num" not in params
+        assert "round" not in cog.playin_cmd.help.lower().split("(")[0]
+
+    def test_dashboard_has_one_playins_action(self, mock_bot):
+        from bot.ui.dashboard import DashboardView
+
+        view = DashboardView(mock_bot, MagicMock())
+        labels = [item.label for item in view.children]
+        assert sum("Playins" in label and "Finish" not in label for label in labels) == 1
