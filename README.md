@@ -479,14 +479,13 @@ target any member without a shared match.
 <details>
 <summary><strong>Permissions</strong> — admin and host gating</summary>
 
-Admin/host commands are gated by two layers:
+Admin/host commands are gated by the bot, not by Discord command permissions.
+Every gated command verifies the caller is a guild administrator **or** holds
+a role listed in the `admin_roles` config key. Rejected users get:
+*"You need an administrator or host role."*
 
-1. **Discord UI**: slash admin commands carry
-   `default_permissions(administrator=True)` — non-admins don't see them unless
-   you enable them per-role under *Server Settings → Integrations → Bot*.
-2. **Runtime check**: every gated command verifies the caller is a guild
-   administrator **or** holds a role listed in the `admin_roles` config key.
-   Rejected users get: *"You need an administrator or host role."*
+Slash admin commands are visible to everyone in the command picker so host
+roles can find them; the runtime check is the source of truth.
 
 Grant host roles:
 

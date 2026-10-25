@@ -232,3 +232,17 @@ class TestNextDummyStart:
             await session.commit()
 
         assert await DevService().next_dummy_start() == DUMMY_ID_BASE + 5
+
+
+def test_host_commands_do_not_require_administrator():
+    """Host roles come from `admin_roles`; Discord admin-only defaults would hide them."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "bot"
+    offenders = [
+        str(path.relative_to(root))
+        for path in root.rglob("*.py")
+        if "require_host_app" in (text := path.read_text())
+        and "default_permissions(administrator=True)" in text
+    ]
+    assert offenders == []

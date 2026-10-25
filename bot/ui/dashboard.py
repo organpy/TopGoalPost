@@ -370,7 +370,6 @@ class DashboardCog(commands.Cog):
         self.season_service = SeasonService()
 
     @app_commands.command(name="dashboard", description="Open the admin dashboard")
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def dashboard_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)

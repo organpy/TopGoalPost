@@ -365,7 +365,6 @@ class TournamentCog(commands.Cog):
     # ── Slash commands (Discord-first progression) ─────────────────
 
     @tourney.command(name="status", description="Season stage summary and recommended next step")
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_status(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -402,7 +401,6 @@ class TournamentCog(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @tourney.command(name="sync_open", description="Rebuild Open win/loss stats from completed matches")
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_sync_open(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -424,7 +422,6 @@ class TournamentCog(commands.Cog):
         name="start_playins",
         description="Finish Open and create the complete preseeded Playin ladder",
     )
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_start_playins(self, interaction: discord.Interaction):
         await self._stage_slash(interaction, self.flow_service.start_playins)
@@ -434,7 +431,6 @@ class TournamentCog(commands.Cog):
         description="Report an existing Playin round's match and bye counts",
     )
     @app_commands.describe(round_num="Playin round number")
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_playin_round(self, interaction: discord.Interaction, round_num: app_commands.Range[int, 1, 3]):
         await interaction.response.defer(ephemeral=True)
@@ -459,7 +455,6 @@ class TournamentCog(commands.Cog):
             await interaction.followup.send(f"Error: {e}", ephemeral=True)
 
     @tourney.command(name="finish_playins", description="Manually retry Playin finalization")
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_finish_playins(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -482,7 +477,6 @@ class TournamentCog(commands.Cog):
     )
     @app_commands.describe(players="Names, Discord IDs, or mentions separated by commas; leave empty to clear")
     @app_commands.autocomplete(players=player_list_autocomplete)
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_skip_open(
         self, interaction: discord.Interaction, players: str = ""
@@ -506,7 +500,6 @@ class TournamentCog(commands.Cog):
         await interaction.followup.send("\n".join(lines), ephemeral=True)
 
     @tourney.command(name="generate_open", description="Create / regenerate Open matches (4 per player)")
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_generate_open(self, interaction: discord.Interaction):
         await self._stage_slash(interaction, self.flow_service.start_open)
@@ -515,7 +508,6 @@ class TournamentCog(commands.Cog):
     @app_commands.describe(
         round_num="Optional round number to display; the whole ladder is created at once",
     )
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_swiss_round(
         self,
@@ -525,7 +517,6 @@ class TournamentCog(commands.Cog):
         await self._stage_slash(interaction, self.flow_service.start_swiss, round_num)
 
     @tourney.command(name="generate_playoffs", description="Seed / regenerate playoff bracket from Swiss results")
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_generate_playoffs(self, interaction: discord.Interaction):
         await self._stage_slash(interaction, self.flow_service.start_playoffs)

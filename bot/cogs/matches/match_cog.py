@@ -227,7 +227,6 @@ class MatchCog(commands.Cog):
         page="Page number (20 matches per page)",
     )
     @app_commands.autocomplete(player=username_autocomplete)
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def list_matches_cmd(
         self,
@@ -277,7 +276,6 @@ class MatchCog(commands.Cog):
         p2_goals="Goals for player 2 (right / side 1)",
     )
     @app_commands.autocomplete(match_id=admin_match_autocomplete)
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def set_score_cmd(self, interaction: discord.Interaction, match_id: int, p1_goals: int, p2_goals: int):
         if p1_goals == p2_goals:
@@ -320,7 +318,6 @@ class MatchCog(commands.Cog):
         ]
     )
     @app_commands.autocomplete(match_id=playoff_match_autocomplete)
-    @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def set_score_playoff_cmd(
         self,
