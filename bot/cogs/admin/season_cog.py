@@ -11,6 +11,7 @@ from discord import app_commands
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from bot.utils.errors import error_message, log_error
 from bot.cogs.checks import require_host
 from bot.services.season import SeasonService, STATE_ORDER, transition_error
 from bot.db import get_db_manager, PlayerSeason, SeasonStatus
@@ -200,8 +201,9 @@ class SeasonAdminCog(commands.Cog):
             shutil.copy2(str(db_path), str(backup_path))
             size_mb = backup_path.stat().st_size / (1024 * 1024)
             await ctx.send(f"Backup created: `{backup_path}` ({size_mb:.1f} MB)")
-        except Exception as e:
-            await ctx.send(f"Backup failed: {e}")
+        except OSError as e:
+            error_id = log_error("Database backup", e)
+            await ctx.send(f"Backup failed. {error_message(error_id)}")
 
 
 async def setup(bot):

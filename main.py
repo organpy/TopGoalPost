@@ -12,6 +12,13 @@ from dotenv import load_dotenv
 
 from bot.db import init_db
 from bot.config import Config
+from bot.utils.errors import (
+    describe_app_command_error,
+    describe_command_error,
+    error_message,
+    log_error,
+    send_interaction,
+)
 
 # Setup basic logging
 logging.basicConfig(
@@ -41,6 +48,8 @@ class TopGoalPostBot(commands.Bot):
 
     async def setup_hook(self):
         """Called automatically when the bot starts up. Use for async initialization."""
+        self.tree.on_error = self.on_app_command_error
+
         logger.info("Initializing database...")
         await init_db()
         
@@ -84,20 +93,19 @@ class TopGoalPostBot(commands.Bot):
     async def on_command_error(self, ctx: commands.Context, error: Exception):
         if isinstance(error, commands.CommandNotFound):
             return
-        if isinstance(error, (commands.CheckFailure, commands.MissingPermissions)):
-            await ctx.send("⛔ You need an administrator or host role to use this command.")
-            return
-        logger.error(f"Command '{ctx.command}' failed: {error}", exc_info=error)
+        message = describe_command_error(error)
+        if message is None:
+            error_id = log_error(f"Command '{ctx.command}'", getattr(error, "original", error))
+            message = error_message(error_id)
+        await ctx.send(message)
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.CheckFailure):
-            msg = "⛔ You need an administrator or host role to use this command."
-            if interaction.response.is_done():
-                await interaction.followup.send(msg, ephemeral=True)
-            else:
-                await interaction.response.send_message(msg, ephemeral=True)
-            return
-        logger.error(f"App command '{interaction.command.qualified_name if interaction.command else '?'}' failed: {error}", exc_info=error)
+        message = describe_app_command_error(error)
+        if message is None:
+            name = interaction.command.qualified_name if interaction.command else "?"
+            error_id = log_error(f"App command '{name}'", getattr(error, "original", error))
+            message = error_message(error_id)
+        await send_interaction(interaction, message)
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user.name} (ID: {self.user.id})")

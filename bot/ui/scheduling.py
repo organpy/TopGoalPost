@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 
 import discord
 
+from bot.utils.errors import ReportingView
+
 
 class WeeklyTimeslotModal(discord.ui.Modal, title="Add weekly availability"):
     """Collect a recurring weekday window for the caller."""
@@ -83,7 +85,7 @@ def _format_minutes(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
-class TimestampView(discord.ui.View):
+class TimestampView(ReportingView):
     """Interactive timestamp display with adjust buttons."""
 
     def __init__(self, time: datetime):
@@ -127,7 +129,7 @@ class TimestampView(discord.ui.View):
         await interaction.response.edit_message(content=self.update_text())
 
 
-class MatchConfirmView(discord.ui.View):
+class MatchConfirmView(ReportingView):
     """DM view letting the opponent confirm or deny a proposed match time."""
 
     def __init__(self, target: int):

@@ -2,6 +2,8 @@
 
 import discord
 
+from bot.utils.errors import ReportingView
+
 from bot.config import Config
 from bot.rendering import ASSETS_ROOT
 from bot.services.season import SeasonService
@@ -73,7 +75,7 @@ class SignupModal(discord.ui.Modal, title="Sign up"):
         await interaction.response.send_message(content=msg, ephemeral=True)
 
 
-class SignupView(discord.ui.View):
+class SignupView(ReportingView):
     """Persistent view — register with bot.add_view() on startup."""
 
     def __init__(self):

@@ -2,8 +2,10 @@
 
 import discord
 
+from bot.utils.errors import ReportingView
 
-class ConfirmActionView(discord.ui.View):
+
+class ConfirmActionView(ReportingView):
     """A yes/no prompt; `value` stays None if the prompt times out."""
 
     def __init__(self, author_id: int, timeout: float = 60):

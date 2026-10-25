@@ -13,6 +13,7 @@ from bot.services.pairing import PairingService
 from bot.services.playin import PlayinService
 from bot.services.tournament_flow import TournamentFlowService
 from bot.config import Config
+from bot.utils.errors import ReportingView
 
 
 class SingleConfigModal(discord.ui.Modal):
@@ -103,7 +104,7 @@ class SkipOpenModal(discord.ui.Modal, title="Players skipping Open"):
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
-class DashboardView(discord.ui.View):
+class DashboardView(ReportingView):
     def __init__(self, bot: commands.Bot, embed: discord.Embed):
         super().__init__(timeout=None)
         self.bot = bot
@@ -180,8 +181,8 @@ class DashboardView(discord.ui.View):
         try:
             await self.playin_service.finish_playins(season)
             await interaction.followup.send("Playins finalized.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        except ValueError as e:
+            await interaction.followup.send(str(e), ephemeral=True)
 
     @discord.ui.button(label="Threads", style=discord.ButtonStyle.secondary, emoji="🧵", row=2)
     async def make_threads(self, interaction: discord.Interaction, button: discord.ui.Button):

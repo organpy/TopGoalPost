@@ -6,6 +6,7 @@ import os
 import discord
 from discord.ext import commands
 
+from bot.utils.errors import error_message, log_error
 from bot.cogs.checks import require_host
 
 from bot.db import get_db_manager, ImageCacheRepository
@@ -68,8 +69,9 @@ class AdminCog(commands.Cog):
                 # If no server ID, just sync globally
                 synced = await self.bot.tree.sync()
                 await ctx.send(f"Sync complete. {len(synced)} global commands synced.")
-        except Exception as e:
-            await ctx.send(f"Sync failed: {e}")
+        except discord.HTTPException as e:
+            error_id = log_error("Command sync", e)
+            await ctx.send(f"Sync failed. {error_message(error_id)}")
 
     @commands.command(name="getpfps", help="Download all guild member avatars to pfps/")
     @require_host()

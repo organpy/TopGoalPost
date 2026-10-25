@@ -1,8 +1,12 @@
 """Match-thread membership helpers shared by the match and admin cogs."""
 
+import logging
+
 import discord
 
 from bot.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 async def get_match_thread_channel(guild: discord.Guild):
@@ -31,5 +35,8 @@ async def sync_player_threads(
                 await thread.add_user(discord.Object(discord_id))
             elif not add and discord_id in member_ids:
                 await thread.remove_user(discord.Object(discord_id))
-        except Exception:
-            pass
+        except discord.HTTPException:
+            logger.warning(
+                "Could not %s user %s in thread %s",
+                "add" if add else "remove", discord_id, thread.id, exc_info=True,
+            )

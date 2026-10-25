@@ -2,12 +2,14 @@
 
 import discord
 
+from bot.utils.errors import ReportingView
+
 from bot.db import get_db_manager, MatchRepository
 from bot.services.match import MatchService
 from bot.config import Config
 
 
-class ConfirmView(discord.ui.View):
+class ConfirmView(ReportingView):
     def __init__(self, match_id: int, p1_goals: int, p2_goals: int, winner_side: int, target_discord_id: int):
         super().__init__(timeout=86400)  # 24 hour timeout
         self.match_id = match_id
@@ -227,7 +229,7 @@ class ReportMatchSelect(discord.ui.Select):
         await self.view.select_match(interaction, int(self.values[0]))
 
 
-class ReportScoreView(discord.ui.View):
+class ReportScoreView(ReportingView):
     """Old-style report flow: pick match, then a preset or custom score."""
 
     def __init__(self, matches: list[dict], reporter_id: int):

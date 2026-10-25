@@ -13,6 +13,7 @@ from bot.rendering.playoff import get_playoff
 from bot.services.player_stats import PlayerStatsService
 from bot.services.season import SeasonService
 from bot.ui.autocomplete import season_autocomplete
+from bot.utils.errors import report_interaction_error
 
 
 class StandingsCog(commands.Cog):
@@ -97,7 +98,7 @@ class StandingsCog(commands.Cog):
                 await interaction.followup.send(file=file)
 
         except Exception as e:
-            await interaction.followup.send(f"Failed: {e}", ephemeral=True)
+            await report_interaction_error(interaction, e, f"{phase} standings")
 
     async def show_open(self, interaction: discord.Interaction, season: int = None):
         await self._send_standings(interaction, "OPEN", season=season)

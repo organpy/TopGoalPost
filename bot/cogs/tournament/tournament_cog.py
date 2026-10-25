@@ -1,6 +1,8 @@
 """Tournament management cog."""
 
+import logging
 from typing import Optional
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -15,6 +17,7 @@ from bot.services.tournament_flow import TournamentFlowService, STAGE_EVENTS
 from bot.db import get_db_manager, MatchRepository, PlayerRepository, EventType, EventRepository
 from bot.ui.autocomplete import player_list_autocomplete
 
+logger = logging.getLogger(__name__)
 
 STAGE_EVENT_TYPES = STAGE_EVENTS
 
@@ -222,8 +225,8 @@ class TournamentCog(commands.Cog):
                 try:
                     await member.remove_roles(*to_remove, reason=f"Stage advanced from {previous_state} to {new_state}")
                 except discord.Forbidden:
-                    pass
-                    
+                    logger.warning("Missing permission to remove stage roles from %s", member.id)
+
     async def _run_stage(self, guild, action, season_num: int, *args) -> dict:
         """Run a flow-service stage action and clean stage roles if it advanced."""
         result = await action(season_num, *args)
@@ -315,8 +318,8 @@ class TournamentCog(commands.Cog):
         try:
             await self.playin_service.finish_playins(season_num)
             await message.edit(content="Playins finished! Qualifiers have been ranked.")
-        except Exception as e:
-            await message.edit(content=f"Error finishing playins: {e}")
+        except ValueError as e:
+            await message.edit(content=f"Could not finish playins: {e}")
 
     async def _swiss_impl(self, ctx, round_num=None):
         await self._stage_prefix(ctx, self.flow_service.start_swiss, round_num)
@@ -451,8 +454,8 @@ class TournamentCog(commands.Cog):
             if round_num == 3:
                 msg += " Playins finalize automatically after the last score."
             await interaction.followup.send(msg, ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        except ValueError as e:
+            await interaction.followup.send(str(e), ephemeral=True)
 
     @tourney.command(name="finish_playins", description="Manually retry Playin finalization")
     @require_host_app()
@@ -468,8 +471,8 @@ class TournamentCog(commands.Cog):
                 "Playins finalized. Start Swiss with `/tourney swiss_round`.",
                 ephemeral=True,
             )
-        except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        except ValueError as e:
+            await interaction.followup.send(str(e), ephemeral=True)
 
     @tourney.command(
         name="skip_open",
