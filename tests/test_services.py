@@ -1845,6 +1845,69 @@ class TestTournamentFlow:
         prerender.assert_awaited_once_with("OPEN", 1)
 
 
+class TestGenerateBeforeAdvance:
+    async def test_start_playins_with_unplayed_open_keeps_state(self, db, seed_data):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await Config().set_season_state("OPEN")
+        async with db.get_session() as session:
+            event = await EventRepository(session).create("Open", EventType.OPEN, 1)
+            match = await MatchRepository(session).create(event.id)
+            mp_repo = MatchPlayerRepository(session)
+            await mp_repo.create(match.id, side=0, player_id=seed_data["players"][0].id)
+            await mp_repo.create(match.id, side=1, player_id=seed_data["players"][1].id)
+            await session.commit()
+
+        result = await TournamentFlowService().start_playins(1)
+
+        assert "Open not finished" in result["error"]
+        assert await Config().get_season_state() == "OPEN"
+
+    async def test_generation_error_keeps_state(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await Config().set_season_state("PLAYIN")
+        flow = TournamentFlowService()
+        flow.pairing_service.generate_swiss_round = AsyncMock(
+            side_effect=ValueError("Swiss needs exactly 32 players")
+        )
+
+        result = await flow.start_swiss(1)
+
+        assert "32 players" in result["error"]
+        assert await Config().get_season_state() == "PLAYIN"
+
+    async def test_successful_generation_advances_once(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await Config().set_season_state("SWISS")
+        flow = TournamentFlowService()
+        flow.pairing_service.generate_playoff_bracket = AsyncMock(return_value=[1, 2])
+
+        first = await flow.start_playoffs(1)
+        second = await flow.start_playoffs(1)
+
+        assert first["advanced_from"] == "SWISS"
+        assert second["advanced_from"] is None
+        assert await Config().get_season_state() == "PLAYOFF"
+
+    async def test_wrong_state_does_not_generate(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await Config().set_season_state("SIGNUP")
+        flow = TournamentFlowService()
+        flow.pairing_service.generate_swiss_round = AsyncMock()
+
+        result = await flow.start_swiss(1)
+
+        assert "Cannot do that from state SIGNUP" in result["error"]
+        flow.pairing_service.generate_swiss_round.assert_not_awaited()
+
+
 class TestResultSummary:
     async def test_bo1_summary_has_stage_players_and_score(self, db, seed_data):
         from bot.services.match import MatchService

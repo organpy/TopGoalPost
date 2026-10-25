@@ -90,27 +90,28 @@ class TestTournamentCog:
     async def test_open_command_delegates(self, mock_ctx, mock_bot):
         cog = TournamentCog(mock_bot)
         cog.season_service.get_current_season_number = AsyncMock(return_value=1)
-        cog.season_service.get_state = AsyncMock(return_value="SIGNUP")
-        cog.pairing_service.generate_open = AsyncMock(return_value=(56, 28, None))
-        cog.season_service.advance_state = AsyncMock(return_value=True)
+        cog.flow_service.start_open = AsyncMock(
+            return_value={"ok": True, "state": "OPEN", "advanced_from": "SIGNUP", "message": "done"}
+        )
+        cog._cleanup_stage_roles = AsyncMock()
 
         await cog._open_impl(mock_ctx)
 
-        cog.pairing_service.generate_open.assert_awaited_once_with(1)
-        cog.season_service.advance_state.assert_awaited_once_with("OPEN")
-        mock_ctx.send.assert_awaited()
+        cog.flow_service.start_open.assert_awaited_once_with(1)
+        cog._cleanup_stage_roles.assert_awaited_once_with(mock_ctx.guild, "SIGNUP", "OPEN")
+        mock_ctx.send.assert_awaited_with("done")
 
     async def test_open_wrong_state(self, mock_ctx, mock_bot):
         cog = TournamentCog(mock_bot)
         cog.season_service.get_current_season_number = AsyncMock(return_value=1)
-        cog.season_service.get_state = AsyncMock(return_value="PLAYOFF")
-        cog.pairing_service.generate_open = AsyncMock()
+        cog.flow_service.season_service.get_state = AsyncMock(return_value="PLAYOFF")
+        cog.flow_service.pairing_service.generate_open = AsyncMock()
 
         await cog._open_impl(mock_ctx)
 
-        cog.pairing_service.generate_open.assert_not_awaited()
+        cog.flow_service.pairing_service.generate_open.assert_not_awaited()
         msg = mock_ctx.send.call_args[0][0]
-        assert "Cannot generate Open" in msg
+        assert "Cannot do that from state PLAYOFF" in msg
 
     async def test_open_no_season(self, mock_ctx, mock_bot):
         cog = TournamentCog(mock_bot)
@@ -123,17 +124,13 @@ class TestTournamentCog:
     async def test_playin_command(self, mock_ctx, mock_bot):
         cog = TournamentCog(mock_bot)
         cog.season_service.get_current_season_number = AsyncMock(return_value=1)
-        cog.season_service.get_state = AsyncMock(return_value="PLAYIN")
-        cog.playin_service.generate_playins = AsyncMock(
-            return_value={
-                "matches_by_round": {1: 10, 2: 6, 3: 3},
-                "byes_by_round": {1: 0, 2: 1, 3: 1},
-            }
+        cog.flow_service.start_playins = AsyncMock(
+            return_value={"ok": True, "state": "PLAYIN", "advanced_from": None, "message": "ok"}
         )
 
-        await cog._playin_impl(mock_ctx, 1)
+        await cog._playin_impl(mock_ctx)
 
-        cog.playin_service.generate_playins.assert_awaited_once_with(1)
+        cog.flow_service.start_playins.assert_awaited_once_with(1)
 
     async def test_finish_playins(self, mock_ctx, mock_bot):
         cog = TournamentCog(mock_bot)

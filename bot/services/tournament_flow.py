@@ -92,8 +92,67 @@ class TournamentFlowService:
         """Rebuild open_wins/losses/gd/hp from completed OPEN matches."""
         return await self.match_service.sync_open_stats(season)
 
+    async def _advance(self, target: str) -> Optional[str]:
+        """Advance to ``target`` after a successful generation.
+
+        Returns the previous state when the stage actually changed, so callers
+        know to clean up Discord roles; None when already in ``target``.
+        """
+        current = await self.season_service.get_state()
+        if current == target:
+            return None
+        await self.season_service.advance_state(target)
+        return current
+
+    async def _require_state(self, allowed: tuple[str, ...]) -> Optional[dict[str, Any]]:
+        state = await self.season_service.get_state()
+        if state in allowed:
+            return None
+        return {
+            "error": f"Cannot do that from state {state}. Need {' or '.join(allowed)}.",
+            "state": state,
+        }
+
+    async def start_open(self, season: int) -> dict[str, Any]:
+        """Generate the Open stage, then move SIGNUP → OPEN."""
+        if err := await self._require_state(("SIGNUP", "OPEN")):
+            return err
+
+        existing = await self._event_match_counts(season, EventType.OPEN)
+        if existing["total"]:
+            return {
+                "ok": True,
+                "state": await self.season_service.get_state(),
+                "advanced_from": await self._advance("OPEN"),
+                "message": (
+                    f"Open already has **{existing['total']}** matches "
+                    f"({existing['unplayed']} unplayed); nothing regenerated."
+                ),
+            }
+
+        matches, players, gen_err = await self.pairing_service.generate_open(season)
+        if gen_err:
+            return {"error": gen_err, "state": await self.season_service.get_state()}
+
+        advanced_from = await self._advance("OPEN")
+        return {
+            "ok": True,
+            "state": "OPEN",
+            "advanced_from": advanced_from,
+            "matches_created": matches,
+            "players": players,
+            "message": (
+                f"Generated **{matches}** Open matches across **{players}** players. "
+                "Each player has 4 opponents to play."
+                + (" State → OPEN." if advanced_from else "")
+            ),
+        }
+
     async def start_playins(self, season: int) -> dict[str, Any]:
-        """Sync Open stats, verify Open is done, and create the Playin graph."""
+        """Sync Open stats, verify Open is done, create the Playin graph, then advance."""
+        if err := await self._require_state(("OPEN", "PLAYIN")):
+            return err
+
         sync = await self.sync_open_stats(season)
         if sync.get("error"):
             return sync
@@ -113,39 +172,34 @@ class TournamentFlowService:
                 "sync": sync,
             }
 
-        state = await self.season_service.get_state()
-        if state == "OPEN":
-            await self.season_service.advance_state("PLAYIN")
-        elif state != "PLAYIN":
-            return {
-                "error": f"Cannot start playins from state {state}. Need OPEN or PLAYIN.",
-            }
-
         try:
             gen = await self.playin_service.generate_playins(season)
-            matches_created = gen["round1_matches"]
-            byes = gen["round1_byes"]
         except ValueError as e:
-            return {"error": str(e), "sync": sync}
+            return {"error": str(e), "sync": sync, "state": await self.season_service.get_state()}
 
+        advanced_from = await self._advance("PLAYIN")
         # Open is finished now; keep its final table ready for `/open`.
         await prerender("OPEN", season)
 
+        layout = gen.get("layout") or {}
+        notice = cut_notice(layout)
+        base = {
+            "ok": True,
+            "state": "PLAYIN",
+            "advanced_from": advanced_from,
+            "sync": sync,
+            "cut_notice": notice,
+        }
         if not any(gen.get("matches_by_round", {}).values()) and not any(
             gen.get("byes_by_round", {}).values()
         ):
-            layout = gen.get("layout") or {}
             auto_count = layout.get("qualifiers", 0)
-            notice = cut_notice(layout)
             return {
-                "ok": True,
-                "state": "PLAYIN",
+                **base,
                 "matches_created": 0,
                 "byes": 0,
                 "matches_by_round": {},
                 "byes_by_round": {},
-                "sync": sync,
-                "cut_notice": notice,
                 "message": (
                     f"No Playin ladder matches needed; {auto_count} "
                     "player(s) qualified for Swiss."
@@ -159,22 +213,63 @@ class TournamentFlowService:
             f"R{rnd}: {match_counts.get(rnd, 0)} matches/{bye_counts.get(rnd, 0)} byes"
             for rnd in (1, 2, 3)
         )
-        notice = cut_notice(gen.get("layout") or {})
         return {
-            "ok": True,
-            "state": "PLAYIN",
-            "matches_created": matches_created,
-            "byes": byes,
+            **base,
+            "matches_created": gen["round1_matches"],
+            "byes": gen["round1_byes"],
             "matches_by_round": match_counts,
             "byes_by_round": bye_counts,
-            "sync": sync,
-            "cut_notice": notice,
             "message": (
                 f"Playins ladder created ({rounds_text}). "
                 "Known players are pre-seeded and future cards show placeholders. "
                 "Just score the matches; Playins finalize automatically. "
                 "A CUT round is added only if R3 overproduces. View: `/playins`."
                 + (f"\n{notice}" if notice else "")
+            ),
+        }
+
+    async def start_swiss(self, season: int, round_num: Optional[int] = None) -> dict[str, Any]:
+        """Create the fixed Swiss ladder, then move PLAYIN → SWISS."""
+        if err := await self._require_state(("PLAYIN", "SWISS")):
+            return err
+        try:
+            matches = await self.pairing_service.generate_swiss_round(season, round_num)
+        except ValueError as e:
+            return {"error": str(e), "state": await self.season_service.get_state()}
+
+        advanced_from = await self._advance("SWISS")
+        if advanced_from:
+            await prerender("PLAYIN", season)
+        label = matches[0].series_game if matches else (round_num or 1)
+        return {
+            "ok": True,
+            "state": "SWISS",
+            "advanced_from": advanced_from,
+            "matches": matches,
+            "message": (
+                f"Swiss bracket ready (66 matches). R{label}: **{len(matches)}** matches."
+                + (" State → SWISS." if advanced_from else "")
+            ),
+        }
+
+    async def start_playoffs(self, season: int) -> dict[str, Any]:
+        """Seed the playoff bracket from Swiss, then move SWISS → PLAYOFF."""
+        if err := await self._require_state(("SWISS", "PLAYOFF")):
+            return err
+        try:
+            seeded = await self.pairing_service.generate_playoff_bracket(season)
+        except ValueError as e:
+            return {"error": str(e), "state": await self.season_service.get_state()}
+
+        advanced_from = await self._advance("PLAYOFF")
+        return {
+            "ok": True,
+            "state": "PLAYOFF",
+            "advanced_from": advanced_from,
+            "matches": seeded,
+            "message": (
+                f"Playoffs seeded: **{len(seeded)}** initial matches."
+                + (" State → PLAYOFF." if advanced_from else "")
             ),
         }
 

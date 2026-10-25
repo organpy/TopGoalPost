@@ -229,37 +229,32 @@ class TournamentCog(commands.Cog):
                 except discord.Forbidden:
                     pass
                     
-    async def _open_impl(self, ctx):
+    async def _run_stage(self, guild, action, season_num: int, *args) -> dict:
+        """Run a flow-service stage action and clean stage roles if it advanced."""
+        result = await action(season_num, *args)
+        if result.get("advanced_from") and guild:
+            await self._cleanup_stage_roles(guild, result["advanced_from"], result["state"])
+        return result
+
+    async def _stage_prefix(self, ctx, action, *args) -> None:
         season_num = await self.season_service.get_current_season_number()
         if not season_num:
             await ctx.send("No active season.")
             return
+        result = await self._run_stage(ctx.guild, action, season_num, *args)
+        await ctx.send(result.get("error") or result["message"])
 
-        state = await self.season_service.get_state()
-        if state not in ("SIGNUP", "OPEN"):
-            await ctx.send(f"Cannot generate Open stage from state {state}. Must be SIGNUP or OPEN.")
+    async def _stage_slash(self, interaction: discord.Interaction, action, *args) -> None:
+        await interaction.response.defer(ephemeral=True)
+        season = await self.season_service.get_current_season_number()
+        if not season:
+            await interaction.followup.send("No active season.", ephemeral=True)
             return
+        result = await self._run_stage(interaction.guild, action, season, *args)
+        await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
 
-        is_first_time = state == "SIGNUP"
-        message = await ctx.send("Generating Open stage...")
-
-        try:
-            matches, players, err = await self.pairing_service.generate_open(season_num)
-            if err:
-                await message.edit(content=f"Error: {err}")
-                return
-
-            if is_first_time:
-                await self.season_service.advance_state("OPEN")
-                if ctx.guild:
-                    await self._cleanup_stage_roles(ctx.guild, "SIGNUP", "OPEN")
-
-            await message.edit(content=
-                f"Generated **{matches}** Open matches across **{players}** players. "
-                f"Each player has 4 opponents to play.{' State advanced to OPEN.' if is_first_time else ' (already existed — no state change).'}"
-            )
-        except Exception as e:
-            await message.edit(content=f"Error generating Open stage: {e}")
+    async def _open_impl(self, ctx):
+        await self._stage_prefix(ctx, self.flow_service.start_open)
 
     @tourney_group.command(name="generate_open", help="Generate Open stage matches (4 per player)")
     @require_host()
@@ -302,44 +297,8 @@ class TournamentCog(commands.Cog):
             lines.append("\n".join(errors))
         await ctx.send("\n".join(lines))
 
-    async def _playin_impl(self, ctx, round_num):
-        season_num = await self.season_service.get_current_season_number()
-        if not season_num:
-            await ctx.send("No active season.")
-            return
-
-        state = await self.season_service.get_state()
-        if state not in ("OPEN", "PLAYIN"):
-            await ctx.send(f"Cannot generate Playin from state {state}.")
-            return
-
-        if state == "OPEN":
-            await self.season_service.advance_state("PLAYIN")
-            if ctx.guild:
-                await self._cleanup_stage_roles(ctx.guild, "OPEN", "PLAYIN")
-
-        message = await ctx.send("Generating the complete Playin ladder...")
-
-        try:
-            gen = await self.playin_service.generate_playins(season_num)
-            counts = ", ".join(
-                f"R{rnd}: {gen['matches_by_round'].get(rnd, 0)} matches/"
-                f"{gen['byes_by_round'].get(rnd, 0)} byes"
-                for rnd in (1, 2, 3)
-            )
-            from bot.services.tournament_flow import cut_notice
-
-            notice = cut_notice(gen.get("layout") or {})
-            await message.edit(
-                content=(
-                    f"Playin ladder ready ({counts}). R2/R3 are pre-seeded with "
-                    "placeholders and fill automatically as scores arrive. "
-                    "Playins finalize when every match is complete."
-                    + (f"\n{notice}" if notice else "")
-                )
-            )
-        except Exception as e:
-            await message.edit(content=f"Error generating Playin stage: {e}")
+    async def _playin_impl(self, ctx, round_num=None):
+        await self._stage_prefix(ctx, self.flow_service.start_playins)
 
     @tourney_group.command(name="generate_playin", help="Run Playins round (1, 2, or 3)")
     @require_host()
@@ -362,39 +321,7 @@ class TournamentCog(commands.Cog):
             await message.edit(content=f"Error finishing playins: {e}")
 
     async def _swiss_impl(self, ctx, round_num=None):
-        season_num = await self.season_service.get_current_season_number()
-        if not season_num:
-            await ctx.send("No active season.")
-            return
-
-        state = await self.season_service.get_state()
-        if state not in ("PLAYIN", "SWISS"):
-            await ctx.send(f"Cannot generate Swiss from state {state}.")
-            return
-
-        if state == "PLAYIN":
-            await self.season_service.advance_state("SWISS")
-            if ctx.guild:
-                await self._cleanup_stage_roles(ctx.guild, "PLAYIN", "SWISS")
-
-        label = f"Swiss round {round_num}" if round_num else "the Swiss bracket"
-        message = await ctx.send(f"Generating {label}...")
-
-        try:
-            matches = await self.pairing_service.generate_swiss_round(
-                season_num, round_num
-            )
-            round_label = (
-                matches[0].series_game if matches else (round_num or "?")
-            )
-            await message.edit(
-                content=(
-                    f"Swiss bracket ready (66 matches). "
-                    f"Round {round_label}: {len(matches)} matches."
-                )
-            )
-        except Exception as e:
-            await message.edit(content=f"Error generating Swiss round: {e}")
+        await self._stage_prefix(ctx, self.flow_service.start_swiss, round_num)
 
     @tourney_group.command(name="generate_swiss", help="Generate the next Swiss round (or a specific one)")
     @require_host()
@@ -404,29 +331,7 @@ class TournamentCog(commands.Cog):
         await self._swiss_impl(ctx, round_num)
 
     async def _playoff_impl(self, ctx):
-        season_num = await self.season_service.get_current_season_number()
-        if not season_num:
-            await ctx.send("No active season.")
-            return
-
-        state = await self.season_service.get_state()
-        if state not in ("SWISS", "PLAYOFF"):
-            await ctx.send(f"Cannot generate Playoffs from state {state}. Must be SWISS or PLAYOFF.")
-            return
-
-        is_first_time = state == "SWISS"
-        message = await ctx.send("Generating Playoffs...")
-
-        try:
-            matches = await self.pairing_service.generate_playoff_bracket(season_num)
-            if is_first_time:
-                await self.season_service.advance_state("PLAYOFF")
-                if ctx.guild:
-                    await self._cleanup_stage_roles(ctx.guild, "SWISS", "PLAYOFF")
-
-            await message.edit(content=f"Generated Playoff bracket ({len(matches)} initial matches seeded).{' State advanced to PLAYOFF.' if is_first_time else ' (already existed — no state change).'}")
-        except Exception as e:
-            await message.edit(content=f"Error generating Playoffs: {e}")
+        await self._stage_prefix(ctx, self.flow_service.start_playoffs)
 
     @tourney_group.command(name="generate_playoffs", help="Generate Playoff Bracket")
     @require_host()
@@ -524,18 +429,7 @@ class TournamentCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_start_playins(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        season = await self.season_service.get_current_season_number()
-        if not season:
-            await interaction.followup.send("No active season.", ephemeral=True)
-            return
-        result = await self.flow_service.start_playins(season)
-        if result.get("error"):
-            await interaction.followup.send(result["error"], ephemeral=True)
-            return
-        if interaction.guild:
-            await self._cleanup_stage_roles(interaction.guild, "OPEN", "PLAYIN")
-        await interaction.followup.send(result["message"], ephemeral=True)
+        await self._stage_slash(interaction, self.flow_service.start_playins)
 
     @tourney.command(
         name="playin_round",
@@ -551,12 +445,11 @@ class TournamentCog(commands.Cog):
             await interaction.followup.send("No active season.", ephemeral=True)
             return
         state = await self.season_service.get_state()
-        if state == "OPEN":
-            await self.season_service.advance_state("PLAYIN")
-            if interaction.guild:
-                await self._cleanup_stage_roles(interaction.guild, "OPEN", "PLAYIN")
-        elif state != "PLAYIN":
-            await interaction.followup.send(f"Must be OPEN or PLAYIN (now {state}).", ephemeral=True)
+        if state != "PLAYIN":
+            await interaction.followup.send(
+                f"Must be PLAYIN (now {state}). Use `/tourney start_playins` first.",
+                ephemeral=True,
+            )
             return
         try:
             m, b = await self.playin_service.generate_round(season, round_num)
@@ -618,32 +511,7 @@ class TournamentCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_generate_open(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        season = await self.season_service.get_current_season_number()
-        if not season:
-            await interaction.followup.send("No active season.", ephemeral=True)
-            return
-        state = await self.season_service.get_state()
-        if state not in ("SIGNUP", "OPEN"):
-            await interaction.followup.send(f"Must be SIGNUP or OPEN (now {state}).", ephemeral=True)
-            return
-        is_first_time = state == "SIGNUP"
-        try:
-            matches, players, err = await self.pairing_service.generate_open(season)
-            if err:
-                await interaction.followup.send(f"Error: {err}", ephemeral=True)
-                return
-            if is_first_time:
-                await self.season_service.advance_state("OPEN")
-                if interaction.guild:
-                    await self._cleanup_stage_roles(interaction.guild, "SIGNUP", "OPEN")
-            await interaction.followup.send(
-                f"Open: **{matches}** matches, **{players}** players."
-                f"{' State → OPEN.' if is_first_time else ' Already existed, no state change.'}",
-                ephemeral=True,
-            )
-        except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        await self._stage_slash(interaction, self.flow_service.start_open)
 
     @tourney.command(name="swiss_round", description="Create the Swiss bracket / show a round")
     @app_commands.describe(
@@ -656,58 +524,13 @@ class TournamentCog(commands.Cog):
         interaction: discord.Interaction,
         round_num: app_commands.Range[int, 1, 5] = None,
     ):
-        await interaction.response.defer(ephemeral=True)
-        season = await self.season_service.get_current_season_number()
-        if not season:
-            await interaction.followup.send("No active season.", ephemeral=True)
-            return
-        state = await self.season_service.get_state()
-        if state == "PLAYIN":
-            await self.season_service.advance_state("SWISS")
-            if interaction.guild:
-                await self._cleanup_stage_roles(interaction.guild, "PLAYIN", "SWISS")
-        elif state != "SWISS":
-            await interaction.followup.send(f"Must be PLAYIN or SWISS (now {state}).", ephemeral=True)
-            return
-        try:
-            created = await self.pairing_service.generate_swiss_round(
-                season, round_num
-            )
-            label = created[0].series_game if created else (round_num or 1)
-            await interaction.followup.send(
-                f"Swiss bracket ready (66 matches). R{label}: **{len(created)}** matches.",
-                ephemeral=True,
-            )
-        except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        await self._stage_slash(interaction, self.flow_service.start_swiss, round_num)
 
     @tourney.command(name="generate_playoffs", description="Seed / regenerate playoff bracket from Swiss results")
     @app_commands.default_permissions(administrator=True)
     @require_host_app()
     async def slash_generate_playoffs(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        season = await self.season_service.get_current_season_number()
-        if not season:
-            await interaction.followup.send("No active season.", ephemeral=True)
-            return
-        state = await self.season_service.get_state()
-        if state not in ("SWISS", "PLAYOFF"):
-            await interaction.followup.send(f"Must be SWISS or PLAYOFF (now {state}).", ephemeral=True)
-            return
-        is_first_time = state == "SWISS"
-        try:
-            matches = await self.pairing_service.generate_playoff_bracket(season)
-            if is_first_time:
-                await self.season_service.advance_state("PLAYOFF")
-                if interaction.guild:
-                    await self._cleanup_stage_roles(interaction.guild, "SWISS", "PLAYOFF")
-            await interaction.followup.send(
-                f"Playoffs seeded: **{len(matches)}** initial matches."
-                f"{' State → PLAYOFF.' if is_first_time else ' Already existed, no state change.'}",
-                ephemeral=True,
-            )
-        except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        await self._stage_slash(interaction, self.flow_service.start_playoffs)
 
 
 async def setup(bot):

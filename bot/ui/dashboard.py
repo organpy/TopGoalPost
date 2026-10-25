@@ -113,106 +113,35 @@ class DashboardView(discord.ui.View):
         self.playin_service = PlayinService()
         self.flow_service = TournamentFlowService()
 
+    async def _run_stage(self, interaction: discord.Interaction, action) -> None:
+        await interaction.response.defer(ephemeral=True)
+        season_num = await self.season_service.get_current_season_number()
+        if not season_num:
+            await interaction.followup.send("No active season.", ephemeral=True)
+            return
+        cog = self.bot.get_cog("TournamentCog")
+        if cog:
+            result = await cog._run_stage(interaction.guild, action, season_num)
+        else:
+            result = await action(season_num)
+        await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
+
     # Row 0: Stage generation
     @discord.ui.button(label="Open", style=discord.ButtonStyle.primary, emoji="🎲", row=0)
     async def gen_open(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        season_num = await self.season_service.get_current_season_number()
-        if not season_num:
-            await interaction.followup.send("No active season.", ephemeral=True)
-            return
-        state = await self.season_service.get_state()
-        if state != "SIGNUP":
-            await interaction.followup.send(f"Must be SIGNUP (currently {state}).", ephemeral=True)
-            return
-        try:
-            m, p, err = await self.pairing_service.generate_open(season_num)
-            if err:
-                await interaction.followup.send(f"Error: {err}", ephemeral=True)
-                return
-            await self.season_service.advance_state("OPEN")
-            await interaction.followup.send(f"Open generated: {m} matches, {p} players. State → OPEN.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        await self._run_stage(interaction, self.flow_service.start_open)
 
     @discord.ui.button(label="Playins", style=discord.ButtonStyle.primary, emoji="⚔️", row=0)
     async def gen_playin(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        season_num = await self.season_service.get_current_season_number()
-        if not season_num:
-            await interaction.followup.send("No active season.", ephemeral=True)
-            return
-        state = await self.season_service.get_state()
-        if state not in ("OPEN", "PLAYIN"):
-            await interaction.followup.send(
-                f"Must be OPEN or PLAYIN (currently {state}).", ephemeral=True
-            )
-            return
-        if state == "OPEN":
-            await self.season_service.advance_state("PLAYIN")
-        try:
-            gen = await self.playin_service.generate_playins(season_num)
-            counts = ", ".join(
-                f"R{rnd}: {gen['matches_by_round'].get(rnd, 0)} matches/"
-                f"{gen['byes_by_round'].get(rnd, 0)} byes"
-                for rnd in (1, 2, 3)
-            )
-            from bot.services.tournament_flow import cut_notice
-
-            notice = cut_notice(gen.get("layout") or {})
-            await interaction.followup.send(
-                f"Playin ladder ready ({counts})."
-                + (f"\n{notice}" if notice else ""),
-                ephemeral=True,
-            )
-        except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        await self._run_stage(interaction, self.flow_service.start_playins)
 
     @discord.ui.button(label="Start Swiss", style=discord.ButtonStyle.primary, emoji="🇨🇭", row=0)
     async def gen_swiss(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        season_num = await self.season_service.get_current_season_number()
-        if not season_num:
-            await interaction.followup.send("No active season.", ephemeral=True)
-            return
-        state = await self.season_service.get_state()
-        if state == "PLAYIN":
-            await self.season_service.advance_state("SWISS")
-        elif state != "SWISS":
-            await interaction.followup.send(
-                f"Must be PLAYIN or SWISS (currently {state}).", ephemeral=True
-            )
-            return
-        try:
-            matches = await self.pairing_service.generate_swiss_round(season_num, None)
-            label = matches[0].series_game if matches else 1
-            await interaction.followup.send(
-                f"Swiss bracket ready (66 matches). R{label}: {len(matches)} matches.",
-                ephemeral=True,
-            )
-        except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        await self._run_stage(interaction, self.flow_service.start_swiss)
 
     @discord.ui.button(label="Playoffs", style=discord.ButtonStyle.primary, emoji="🏆", row=0)
     async def seed_playoff(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        season_num = await self.season_service.get_current_season_number()
-        if not season_num:
-            await interaction.followup.send("No active season.", ephemeral=True)
-            return
-        state = await self.season_service.get_state()
-        if state not in ("SWISS", "PLAYOFF"):
-            await interaction.followup.send(
-                f"Must be SWISS or PLAYOFF (currently {state}).", ephemeral=True
-            )
-            return
-        try:
-            matches = await self.pairing_service.generate_playoff_bracket(season_num)
-            if state == "SWISS":
-                await self.season_service.advance_state("PLAYOFF")
-            await interaction.followup.send(f"Playoffs seeded: {len(matches)} matches.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        await self._run_stage(interaction, self.flow_service.start_playoffs)
 
     # Row 1: Guided progression (prefer these over raw state jumps)
     @discord.ui.button(label="Next Step", style=discord.ButtonStyle.primary, emoji="➡️", row=1)
@@ -239,16 +168,7 @@ class DashboardView(discord.ui.View):
 
     @discord.ui.button(label="Start Playins", style=discord.ButtonStyle.success, emoji="⚔️", row=1)
     async def start_playins(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        season = await self.season_service.get_current_season_number()
-        if not season:
-            await interaction.followup.send("No active season.", ephemeral=True)
-            return
-        result = await self.flow_service.start_playins(season)
-        if result.get("error"):
-            await interaction.followup.send(result["error"], ephemeral=True)
-            return
-        await interaction.followup.send(result["message"], ephemeral=True)
+        await self._run_stage(interaction, self.flow_service.start_playins)
 
     @discord.ui.button(label="Skip Open", style=discord.ButtonStyle.secondary, emoji="⏭️", row=1)
     async def skip_open(self, interaction: discord.Interaction, button: discord.ui.Button):
