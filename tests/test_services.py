@@ -1937,6 +1937,86 @@ class TestReadiness:
         assert ready["action"] == "start_open"
 
 
+async def _swiss_with_results(db, completed: int, unplayed: int = 0):
+    """Season 1 with a Swiss event: ``completed`` 1-0 matches plus open ones."""
+    from datetime import datetime
+    from bot.db import Player
+
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        await session.flush()
+        players = []
+        for i in range(32):
+            p = Player(discord_id=9000 + i, name=f"S{i:02d}", country="US")
+            session.add(p)
+            await session.flush()
+            session.add(PlayerSeason(player_id=p.id, season_number=1, hp=4))
+            players.append(p)
+        event = await EventRepository(session).create("Swiss", EventType.SWISS, 1)
+        for i in range(completed + unplayed):
+            match = Match(
+                event_id=event.id,
+                completed_at=datetime.utcnow() if i < completed else None,
+            )
+            session.add(match)
+            await session.flush()
+            winner, loser = players[i % 16], players[16 + i % 16]
+            session.add(MatchPlayer(match_id=match.id, side=0, player_id=winner.id,
+                                    goals=1, is_winner=i < completed))
+            session.add(MatchPlayer(match_id=match.id, side=1, player_id=loser.id,
+                                    goals=0, is_winner=False))
+        await session.commit()
+
+
+class TestPlayoffGate:
+    async def test_incomplete_swiss_blocks_seeding(self, db, monkeypatch):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        monkeypatch.setattr("bot.services.pairing.prerender", AsyncMock())
+        await _swiss_with_results(db, completed=16, unplayed=1)
+        await Config().set_season_state("SWISS")
+
+        result = await TournamentFlowService().start_playoffs(1)
+
+        assert "1 of 17 match(es) still unplayed" in result["error"]
+        assert await Config().get_season_state() == "SWISS"
+
+    async def test_wrong_qualifier_count_blocks_seeding(self, db, monkeypatch):
+        from bot.services.pairing import PairingService
+
+        monkeypatch.setattr("bot.services.pairing.prerender", AsyncMock())
+        monkeypatch.setattr("bot.services.pairing.SWISS_BRACKET", [None] * 16)
+        await _swiss_with_results(db, completed=16)
+
+        with pytest.raises(ValueError, match="Expected 16 Swiss qualifiers"):
+            await PairingService().generate_playoff_bracket(1)
+
+    async def test_force_skips_gate(self, db, monkeypatch):
+        from bot.services.pairing import PairingService
+
+        monkeypatch.setattr("bot.services.pairing.prerender", AsyncMock())
+        await _swiss_with_results(db, completed=16, unplayed=1)
+
+        assert await PairingService().generate_playoff_bracket(1, force=True)
+
+    async def test_complete_swiss_seeds_and_closes_event(self, db, monkeypatch):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        monkeypatch.setattr("bot.services.pairing.prerender", AsyncMock())
+        await _swiss_with_results(db, completed=16)
+        await Config().set_season_state("SWISS")
+
+        result = await TournamentFlowService().start_playoffs(1)
+
+        assert result["ok"] is True
+        assert await Config().get_season_state() == "PLAYOFF"
+        async with db.get_session() as session:
+            swiss = await EventRepository(session).get_by_type_and_season(EventType.SWISS, 1)
+            assert swiss.status == EventStatus.COMPLETED
+
+
 class TestResultSummary:
     async def test_bo1_summary_has_stage_players_and_score(self, db, seed_data):
         from bot.services.match import MatchService

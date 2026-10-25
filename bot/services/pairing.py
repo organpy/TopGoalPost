@@ -21,6 +21,8 @@ from bot.db import (
 from bot.rendering import prerender
 
 SWISS_FIELD_SIZE = 32
+SWISS_WINS_TO_QUALIFY = 3
+PLAYOFF_FIELD_SIZE = 16
 
 PLAYOFF_BRACKET: list[tuple[str, int | None, int | None, str | None, str | None, str, str]] = [
     # ── Winners Bracket ──────────────────────────────────────
@@ -542,8 +544,13 @@ class PairingService:
                     pools[m.id] = mps
         return pools 
 
-    async def generate_playoff_bracket(self, season: int) -> list[int]:
-        """Select the top 16 by Swiss record and seed the playoff bracket."""
+    async def generate_playoff_bracket(self, season: int, force: bool = False) -> list[int]:
+        """Select the top 16 by Swiss record and seed the playoff bracket.
+
+        Refuses to seed until every Swiss match is complete and, for the fixed
+        ladder, exactly 16 players reached 3 wins. ``force`` skips both checks
+        for emergency repairs.
+        """
         async with self.db.get_session() as session:
             swiss_event = await EventRepository(session).get_by_type_and_season(
                 EventType.SWISS, season
@@ -553,6 +560,12 @@ class PairingService:
 
             match_repo = MatchRepository(session)
             matches = await match_repo.get_by_event(swiss_event.id)
+            unplayed = sum(1 for m in matches if not m.completed_at)
+            if not force and (not matches or unplayed):
+                raise ValueError(
+                    f"Swiss is not complete: {unplayed} of {len(matches)} "
+                    "match(es) still unplayed."
+                )
 
             stats: dict[int, dict[str, int]] = {}
             for match in matches:
@@ -601,7 +614,20 @@ class PairingService:
                     pid,
                 ),
             )
-            top_16 = ranked[:16]
+            top_16 = ranked[:PLAYOFF_FIELD_SIZE]
+
+            if len(matches) == len(SWISS_BRACKET) and not force:
+                qualified = sum(
+                    1 for pid in stats if stats[pid]["wins"] >= SWISS_WINS_TO_QUALIFY
+                )
+                if qualified != PLAYOFF_FIELD_SIZE:
+                    raise ValueError(
+                        f"Expected {PLAYOFF_FIELD_SIZE} Swiss qualifiers with "
+                        f"{SWISS_WINS_TO_QUALIFY} wins; found {qualified}."
+                    )
+
+            swiss_event.status = EventStatus.COMPLETED
+            await session.commit()
 
         event = await self._get_or_create_event(EventType.PLAYOFF, season)
         seeded = await self.seed_playoff(event.id, top_16)
