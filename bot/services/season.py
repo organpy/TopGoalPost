@@ -116,6 +116,23 @@ class SeasonService:
         await self.advance_state("OFFSEASON", force=True)
         return True
 
+    async def is_active(self, season: int) -> bool:
+        """Only the current season may be mutated; archived ones are read-only.
+
+        With no season configured at all there is nothing to protect.
+        """
+        current = await self.get_current_season_number()
+        if current is not None:
+            return season == current
+        row = await self.get_season(season)
+        return row is None or row.status != SeasonStatus.ARCHIVED
+
+    async def require_active(self, season: int) -> Optional[str]:
+        """An error message when ``season`` is archived, otherwise None."""
+        if await self.is_active(season):
+            return None
+        return f"Season {season} is archived and read-only."
+
     async def get_season(self, number: int) -> Optional[Season]:
         """Return a season row whether it is active or archived."""
         async with self.db.get_session() as session:

@@ -39,6 +39,9 @@ class MatchService:
         Returns:
             dict with match result info
         """
+        if archived := await self._archived_error(match_id):
+            return {"error": archived}
+
         async with self.db.get_session() as session:
             mp_repo = MatchPlayerRepository(session)
             match_repo = MatchRepository(session)
@@ -102,12 +105,9 @@ class MatchService:
             await self._advance_playoff_bo3(match_id)
         elif event and event.type == EventType.PLAYIN:
             from bot.services.playin import PlayinService
-            from bot.services.season import SeasonService
 
             await self._propagate(match_id)
-            season = await SeasonService().get_current_season_number()
-            if season:
-                playin_advance = await PlayinService().try_advance_after_score(season)
+            playin_advance = await PlayinService().try_advance_after_score(event.season)
         elif event and event.type == EventType.SWISS:
             await self._propagate(match_id)
         else:
@@ -126,7 +126,14 @@ class MatchService:
         return result
 
     async def forfeit(self, match_id: int, loser_id: int) -> Optional[dict]:
-        """Forfeit a match. The other player gets a 1-0 win."""
+        """Forfeit a match. The other player gets a 1-0 win.
+
+        Returns None when the match cannot be forfeited, or ``{"error": ...}``
+        when it belongs to an archived season.
+        """
+        if archived := await self._archived_error(match_id):
+            return {"error": archived}
+
         async with self.db.get_session() as session:
             mp_repo = MatchPlayerRepository(session)
             match_repo = MatchRepository(session)
@@ -165,12 +172,9 @@ class MatchService:
             await self._advance_playoff_bo3(match_id)
         elif event and event.type == EventType.PLAYIN:
             from bot.services.playin import PlayinService
-            from bot.services.season import SeasonService
 
             await self._propagate(match_id)
-            season = await SeasonService().get_current_season_number()
-            if season:
-                playin_advance = await PlayinService().try_advance_after_score(season)
+            playin_advance = await PlayinService().try_advance_after_score(event.season)
         elif event and event.type == EventType.SWISS:
             await self._propagate(match_id)
         elif event and event.type == EventType.OPEN:
@@ -651,6 +655,15 @@ class MatchService:
             await session.flush()
             session.add(MatchPlayer(match_id=gf2_match.id, side=0, player_id=gf_p1_id))
             session.add(MatchPlayer(match_id=gf2_match.id, side=1, player_id=gf_p2_id))
+
+    async def _archived_error(self, match_id: int) -> Optional[str]:
+        """Refuse mutations of matches that belong to an archived season."""
+        from bot.services.season import SeasonService
+
+        event = await self._get_event_for_match(match_id)
+        if not event:
+            return None
+        return await SeasonService().require_active(event.season)
 
     async def _get_event_for_match(self, match_id: int) -> Optional:
         async with self.db.get_session() as session:

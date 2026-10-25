@@ -2017,6 +2017,68 @@ class TestPlayoffGate:
             assert swiss.status == EventStatus.COMPLETED
 
 
+async def _archived_open_match(db, completed: bool = False) -> int:
+    """Season 1 archived with one Open match, season 2 active."""
+    from datetime import datetime
+    from bot.db import Player
+
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ARCHIVED))
+        session.add(Season(number=2, status=SeasonStatus.ACTIVE))
+        p1 = Player(discord_id=7001, name="Old1", country="US")
+        p2 = Player(discord_id=7002, name="Old2", country="US")
+        session.add_all([p1, p2])
+        await session.flush()
+        event = await EventRepository(session).create("Open", EventType.OPEN, 1)
+        match = Match(event_id=event.id, completed_at=datetime.utcnow() if completed else None)
+        session.add(match)
+        await session.flush()
+        session.add(MatchPlayer(match_id=match.id, side=0, player_id=p1.id,
+                                goals=1 if completed else None, is_winner=completed))
+        session.add(MatchPlayer(match_id=match.id, side=1, player_id=p2.id,
+                                goals=0 if completed else None, is_winner=False))
+        await session.commit()
+        return match.id
+
+
+class TestArchivedSeasonGuard:
+    async def test_archived_match_cannot_be_scored(self, db):
+        from bot.services.match import MatchService
+
+        match_id = await _archived_open_match(db)
+        result = await MatchService().report_score(match_id, 2, 0, 0)
+        assert result["error"] == "Season 1 is archived and read-only."
+
+    async def test_archived_match_cannot_be_forfeited(self, db):
+        from bot.services.match import MatchService
+
+        match_id = await _archived_open_match(db)
+        async with db.get_session() as session:
+            mps = await MatchPlayerRepository(session).get_by_match(match_id)
+        result = await MatchService().forfeit(match_id, mps[0].player_id)
+        assert result == {"error": "Season 1 is archived and read-only."}
+
+    async def test_rescoring_archived_match_keeps_stage(self, db):
+        from bot.config import Config
+        from bot.services.match import MatchService
+
+        await Config().set_season_state("SWISS")
+        match_id = await _archived_open_match(db, completed=True)
+        result = await MatchService().report_score(match_id, 0, 3, 1)
+        assert "archived" in result["error"]
+        assert await Config().get_season_state() == "SWISS"
+
+    async def test_report_list_excludes_old_season(self, db):
+        from unittest.mock import MagicMock
+        from bot.cogs.matches.match_cog import MatchCog
+
+        match_id = await _archived_open_match(db)
+        async with db.get_session() as session:
+            mps = await MatchPlayerRepository(session).get_by_match(match_id)
+        matches = await MatchCog(MagicMock())._active_player_matches(mps[0].player_id)
+        assert matches == []
+
+
 class TestResultSummary:
     async def test_bo1_summary_has_stage_players_and_score(self, db, seed_data):
         from bot.services.match import MatchService

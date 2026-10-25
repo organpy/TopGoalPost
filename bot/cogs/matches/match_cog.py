@@ -9,6 +9,7 @@ from bot.cogs.checks import require_host_app
 from discord import app_commands
 
 from bot.services.match import MatchService
+from bot.services.season import SeasonService
 from bot.db import get_db_manager, MatchPlayerRepository, PlayerRepository
 from bot.ui.autocomplete import username_autocomplete
 from bot.ui.report import ReportScoreView
@@ -92,8 +93,11 @@ class MatchCog(commands.Cog):
         """Active matches for the reporter, with their side and display label."""
         from sqlalchemy import select, and_
         from sqlalchemy.orm import selectinload
-        from bot.db import Match as M, MatchPlayer as MP
+        from bot.db import Match as M, MatchPlayer as MP, Event
 
+        season = await SeasonService().get_current_season_number()
+        if not season:
+            return []
         async with self.db.get_session() as session:
             stmt = (
                 select(M)
@@ -102,7 +106,14 @@ class MatchCog(commands.Cog):
                     selectinload(M.event),
                 )
                 .join(MP)
-                .where(and_(MP.player_id == player_id, M.completed_at.is_(None)))
+                .join(Event, M.event_id == Event.id)
+                .where(
+                    and_(
+                        MP.player_id == player_id,
+                        M.completed_at.is_(None),
+                        Event.season == season,
+                    )
+                )
                 .order_by(M.id.desc())
             )
             matches = (await session.execute(stmt)).scalars().unique().all()
@@ -195,8 +206,10 @@ class MatchCog(commands.Cog):
                 
         await interaction.response.defer(ephemeral=True)
         result = await self.match_service.forfeit(match_id, player.id)
-        
-        if result:
+
+        if result and result.get("error"):
+            await interaction.followup.send(result["error"], ephemeral=True)
+        elif result:
             await interaction.followup.send(f"Match {match_id} forfeited.", ephemeral=True)
         else:
             await interaction.followup.send(
