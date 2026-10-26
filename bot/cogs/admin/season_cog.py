@@ -1,9 +1,6 @@
 """Admin cog for season management."""
 
-import os
-import shutil
-from datetime import datetime, timezone
-from pathlib import Path
+import sqlite3
 
 import discord
 from discord.ext import commands
@@ -14,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from bot.utils.errors import error_message, log_error
 from bot.cogs.checks import require_host, require_host_app
 from bot.services import audit
+from bot.services.health import BACKUP_RETENTION, backup_database, database_path
 from bot.services.season import SeasonService, STATE_ORDER, next_state, transition_error
 from bot.db import get_db_manager, PlayerSeason, SeasonStatus
 from bot.config import Config
@@ -265,28 +263,24 @@ class SeasonAdminCog(commands.Cog):
     @commands.command(name="backup", help="Backup the database")
     @require_host()
     async def backup_cmd(self, ctx: commands.Context):
-        from bot.db import PROJECT_ROOT, resolve_database_url
-
-        backup_dir = PROJECT_ROOT / "data" / "backups"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        db_url = resolve_database_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:///data/bot.db"))
-        sqlite_prefix = "sqlite+aiosqlite:///"
-        if not db_url.startswith(sqlite_prefix):
+        db_path = database_path()
+        if db_path is None:
             await ctx.send("Backup is only supported for sqlite databases.")
             return
-        db_path = Path(db_url[len(sqlite_prefix):])
         if not db_path.exists():
             await ctx.send(f"No database file found at `{db_path}`.")
             return
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        backup_path = backup_dir / f"{db_path.stem}_{timestamp}.db"
         try:
-            shutil.copy2(str(db_path), str(backup_path))
-            size_mb = backup_path.stat().st_size / (1024 * 1024)
-            await ctx.send(f"Backup created: `{backup_path}` ({size_mb:.1f} MB)")
-        except OSError as e:
+            backup_path = await backup_database(db_path)
+        except (OSError, sqlite3.Error) as e:
             error_id = log_error("Database backup", e)
             await ctx.send(f"Backup failed. {error_message(error_id)}")
+            return
+        size_mb = backup_path.stat().st_size / (1024 * 1024)
+        await ctx.send(
+            f"Backup created: `{backup_path.name}` ({size_mb:.1f} MB). "
+            f"Keeping the newest {BACKUP_RETENTION}."
+        )
 
 
 async def setup(bot):

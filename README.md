@@ -469,7 +469,8 @@ target any member without a shared match.
 | `!set_config key value` | Set a config value |
 | `!remove_config key` | Delete a config value |
 | `!playerlist` | List all registered players |
-| `!backup` | Backup the DB to `data/backups/` |
+| `!backup` | Consistent SQLite backup (backup API, safe while running) to `data/backups/`; keeps the newest 10 |
+| `/doctor` | Check DB, migrations, config keys, channels, roles, bot permissions and asset folders |
 | `!reimport` | Hot-reload the standings renderer |
 | `!resetimages` | Clear the standings image cache |
 | `!sync_commands` | Force-resync slash commands |

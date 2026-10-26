@@ -15,6 +15,7 @@ from bot.cogs.checks import require_host, require_host_app
 
 from bot.db import get_db_manager, ImageCacheRepository
 from bot.services import audit
+from bot.services.health import Check, HealthService
 from bot.services.season import SeasonService
 from bot.config import Config
 from bot.rendering import StandingsMaker, ASSETS_ROOT
@@ -282,6 +283,46 @@ class AdminCog(commands.Cog):
             details = f" `{e.details}`" if e.details else ""
             lines.append(f"<t:{ts}:f> {who} **{e.action}**{target}{details}")
         await interaction.response.send_message("\n".join(lines)[:2000], ephemeral=True)
+
+    @app_commands.command(name="doctor", description="Check configuration, permissions and database health (host)")
+    @require_host_app()
+    async def doctor_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        checks = await HealthService().check()
+        if interaction.guild:
+            checks += await self._discord_checks(interaction.guild)
+        failed = [c for c in checks if not c.ok]
+        lines = [f"{c.icon} {c.name}" + (f" — {c.detail}" if c.detail else "") for c in checks]
+        header = "All checks passed." if not failed else f"{len(failed)} issue(s) found."
+        await interaction.followup.send(f"**Doctor:** {header}\n" + "\n".join(lines), ephemeral=True)
+
+    async def _discord_checks(self, guild: discord.Guild) -> list[Check]:
+        cfg = Config()
+        checks: list[Check] = []
+        for key in ("match_channel", "score_channel", "agreements_channel", "announcements_channel"):
+            cid = await cfg.get_channel_id(key)
+            if cid:
+                found = guild.get_channel(cid) is not None
+                checks.append(Check(f"channel `{key}` exists", found, "" if found else f"{cid} not found"))
+        for key in ("signup_role", "moderator_role"):
+            rid = await cfg.get_role_id(key)
+            if rid:
+                found = guild.get_role(rid) is not None
+                checks.append(Check(f"role `{key}` exists", found, "" if found else f"{rid} not found"))
+        for rid in await cfg.get_admin_role_ids():
+            found = guild.get_role(rid) is not None
+            checks.append(Check(f"host role {rid} exists", found))
+
+        me = guild.me
+        if me is not None:
+            checks.append(Check("bot can Manage Roles", me.guild_permissions.manage_roles))
+            match_channel = guild.get_channel(await cfg.get_channel_id("match_channel") or 0)
+            if match_channel is not None:
+                perms = match_channel.permissions_for(me)
+                for perm in ("send_messages", "embed_links", "attach_files",
+                             "create_public_threads", "manage_threads"):
+                    checks.append(Check(f"match channel: {perm}", getattr(perms, perm)))
+        return checks
 
     @commands.Cog.listener()
     async def on_user_update(self, before: discord.User, after: discord.User):

@@ -166,20 +166,23 @@ class TestSignupCog:
 class TestSeasonAdminCog:
     """Verify season admin cog delegates."""
 
-    async def test_backup_creates_file(self, mock_ctx, mock_bot, tmp_path):
+    async def test_backup_creates_readable_copy(self, mock_ctx, mock_bot, tmp_path, monkeypatch):
+        import sqlite3
+
+        real_db = tmp_path / "bot.db"
+        with sqlite3.connect(real_db) as conn:
+            conn.execute("CREATE TABLE t (x INTEGER)")
+            conn.execute("INSERT INTO t VALUES (42)")
+        monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{real_db}")
+        monkeypatch.setattr("bot.services.health.PROJECT_ROOT", tmp_path)
+
         cog = SeasonAdminCog(mock_bot)
+        await cog.backup_cmd.callback(cog, mock_ctx)
 
-        from pathlib import Path as OrigPath
-        real_db = OrigPath(str(tmp_path / "bot.db"))
-        real_db.write_text("fake-db-content")
-
-        db_url = f"sqlite+aiosqlite:///{real_db}"
-
-        with patch("bot.db.PROJECT_ROOT", tmp_path):
-            with patch("bot.cogs.admin.season_cog.os.getenv", return_value=db_url):
-                with patch("bot.cogs.admin.season_cog.shutil.copy2") as mock_copy:
-                    await cog.backup_cmd.callback(cog, mock_ctx)
-                    mock_copy.assert_called_once()
+        [backup] = (tmp_path / "data" / "backups").glob("bot_*.db")
+        with sqlite3.connect(backup) as conn:
+            assert conn.execute("SELECT x FROM t").fetchone() == (42,)
+        assert "Backup created" in mock_ctx.send.call_args[0][0]
 
 
     def test_slash_season_group_has_subcommands(self, mock_bot):
