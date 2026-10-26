@@ -7,6 +7,7 @@ from .models import (
     Event,
     Match,
     MatchPlayer,
+    MatchReport,
     ImageCache,
     Timezone,
     Timeslot,
@@ -14,6 +15,7 @@ from .models import (
     EventType,
     EventStatus,
     SeasonStatus,
+    ReportStatus,
 )
 from .session import DatabaseManager, get_db_manager, init_db_manager
 from .repositories import (
@@ -24,6 +26,7 @@ from .repositories import (
     EventRepository,
     MatchRepository,
     MatchPlayerRepository,
+    MatchReportRepository,
     ImageCacheRepository,
     TimezoneRepository,
     TimeslotRepository,
@@ -66,6 +69,8 @@ __all__ = [
     "Event",
     "Match",
     "MatchPlayer",
+    "MatchReport",
+    "ReportStatus",
     "ImageCache",
     "Timezone",
     "Timeslot",
@@ -84,6 +89,7 @@ __all__ = [
     "EventRepository",
     "MatchRepository",
     "MatchPlayerRepository",
+    "MatchReportRepository",
     "ImageCacheRepository",
     "TimezoneRepository",
     "TimeslotRepository",

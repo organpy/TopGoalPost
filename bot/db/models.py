@@ -35,6 +35,16 @@ class EventStatus(PyEnum):
     COMPLETED = "completed"
 
 
+class ReportStatus(PyEnum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+    DISPUTED = "disputed"
+
+
+OPEN_REPORT_STATUSES = (ReportStatus.PENDING, ReportStatus.DISPUTED)
+
+
 class SeasonStatus(PyEnum):
     ACTIVE = "active"
     ARCHIVED = "archived"
@@ -214,6 +224,38 @@ class MatchPlayer(Base):
 
     def __repr__(self):
         return f"<MatchPlayer(id={self.id}, match_id={self.match_id}, player_id={self.player_id}, side={self.side})>"
+
+
+class MatchReport(Base):
+    """A player-submitted score waiting for the opponent (or a mod) to resolve it."""
+
+    __tablename__ = "match_reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    match_id: Mapped[int] = mapped_column(
+        ForeignKey("matches.id", ondelete="CASCADE"), index=True
+    )
+    reporter_discord_id: Mapped[int] = mapped_column(BigInteger)
+    reporter_player_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("players.id"), nullable=True
+    )
+    p1_goals: Mapped[int] = mapped_column(Integer)
+    p2_goals: Mapped[int] = mapped_column(Integer)
+    winner_side: Mapped[int] = mapped_column(Integer)
+    status: Mapped[ReportStatus] = mapped_column(
+        Enum(ReportStatus), default=ReportStatus.PENDING, index=True
+    )
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    channel_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    resolved_by: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+
+    match: Mapped["Match"] = relationship()
+
+    def __repr__(self):
+        return f"<MatchReport(id={self.id}, match_id={self.match_id}, status={self.status.value})>"
 
 
 class ImageCache(Base):

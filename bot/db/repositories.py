@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 from sqlalchemy import select, update, delete, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +13,9 @@ from .models import (
     Match,
     MatchPlayer,
     ImageCache,
+    MatchReport,
+    OPEN_REPORT_STATUSES,
+    ReportStatus,
     Timezone,
     Timeslot,
     EventType,
@@ -330,6 +334,71 @@ class MatchPlayerRepository:
             and_(MatchPlayer.match_id == match_id, MatchPlayer.side == side)
         ).values(is_winner=True)
         await self.session.execute(stmt)
+
+
+class MatchReportRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(
+        self,
+        match_id: int,
+        reporter_discord_id: int,
+        p1_goals: int,
+        p2_goals: int,
+        winner_side: int,
+        reporter_player_id: Optional[int] = None,
+    ) -> MatchReport:
+        report = MatchReport(
+            match_id=match_id,
+            reporter_discord_id=reporter_discord_id,
+            reporter_player_id=reporter_player_id,
+            p1_goals=p1_goals,
+            p2_goals=p2_goals,
+            winner_side=winner_side,
+            status=ReportStatus.PENDING,
+        )
+        self.session.add(report)
+        await self.session.flush()
+        return report
+
+    async def get(self, report_id: int) -> Optional[MatchReport]:
+        return await self.session.get(MatchReport, report_id)
+
+    async def get_open_for_match(self, match_id: int) -> Optional[MatchReport]:
+        stmt = select(MatchReport).where(
+            and_(
+                MatchReport.match_id == match_id,
+                MatchReport.status.in_(OPEN_REPORT_STATUSES),
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
+
+    async def list_open(self, statuses=OPEN_REPORT_STATUSES) -> list[MatchReport]:
+        stmt = (
+            select(MatchReport)
+            .where(MatchReport.status.in_(statuses))
+            .order_by(MatchReport.created_at)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def resolve(
+        self,
+        report: MatchReport,
+        status: ReportStatus,
+        resolved_by: int,
+        reason: Optional[str] = None,
+    ) -> MatchReport:
+        report.status = status
+        report.resolved_by = resolved_by
+        if reason:
+            report.reason = reason
+        if status not in OPEN_REPORT_STATUSES:
+            report.resolved_at = datetime.utcnow()
+        await self.session.flush()
+        return report
 
 
 class ImageCacheRepository:
