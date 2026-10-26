@@ -89,7 +89,9 @@ class TopGoalPostBot(commands.Bot):
             await self.load_extension(cog)
 
         from bot.ui.signup_button import SignupView
+        from bot.ui.report import ReportActionButton
         self.add_view(SignupView())
+        self.add_dynamic_items(ReportActionButton)
 
         logger.info("Syncing app commands...")
         guild_id = os.getenv("SERVER_ID")

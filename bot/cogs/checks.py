@@ -28,6 +28,16 @@ async def _is_host(member: Optional[discord.abc.User], guild: Optional[discord.G
     return bool(role_ids & admin_roles)
 
 
+async def is_moderator(member: Optional[discord.abc.User], guild: Optional[discord.Guild]) -> bool:
+    """Hosts, plus members holding the configured `moderator_role`."""
+    if await _is_host(member, guild):
+        return True
+    mod_role_id = await Config().get_role_id("moderator_role")
+    if not mod_role_id:
+        return False
+    return any(r.id == mod_role_id for r in getattr(member, "roles", []) or [])
+
+
 async def host_predicate(ctx: commands.Context) -> bool:
     """Prefix-command predicate: administrator or a configured host role."""
     ok = await _is_host(ctx.author, ctx.guild)

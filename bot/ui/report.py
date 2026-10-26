@@ -4,80 +4,91 @@ import discord
 
 from bot.utils.errors import ReportingView
 
-from bot.db import get_db_manager, MatchRepository
-from bot.services.match import MatchService
+from bot.cogs.checks import is_moderator
 from bot.config import Config
+from bot.services.match_report import MatchReportService
 
 
-class ConfirmView(ReportingView):
-    def __init__(self, match_id: int, p1_goals: int, p2_goals: int, winner_side: int, target_discord_id: int):
-        super().__init__(timeout=86400)  # 24 hour timeout
-        self.match_id = match_id
-        self.p1_goals = p1_goals
-        self.p2_goals = p2_goals
-        self.winner_side = winner_side
-        self.target_discord_id = target_discord_id
-        self.value = None
+REPORT_ACTIONS = {
+    "confirm": ("Confirm", discord.ButtonStyle.success),
+    "reject": ("Reject", discord.ButtonStyle.danger),
+    "dispute": ("Dispute", discord.ButtonStyle.secondary),
+}
+
+
+class ReportActionButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"matchreport:(?P<action>confirm|reject|dispute):(?P<report_id>\d+)",
+):
+    """Stateless confirm/reject/dispute button; the report lives in the DB.
+
+    Registered once with ``bot.add_dynamic_items`` so buttons on old messages
+    keep working after a restart. Never change the custom_id format.
+    """
+
+    def __init__(self, action: str, report_id: int):
+        label, style = REPORT_ACTIONS[action]
+        super().__init__(
+            discord.ui.Button(
+                label=label, style=style, custom_id=f"matchreport:{action}:{report_id}"
+            )
+        )
+        self.action = action
+        self.report_id = report_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match["action"], int(match["report_id"]))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # Check if user is opponent or has mod_role
-        if interaction.user.id == self.target_discord_id:
+        service = MatchReportService()
+        report = await service.get(self.report_id)
+        if report is None:
+            await interaction.response.send_message("This report no longer exists.", ephemeral=True)
+            return False
+        is_mod = await is_moderator(interaction.user, interaction.guild)
+        if await service.can_resolve(report, interaction.user.id, is_mod):
             return True
-        cfg = Config()
-        mod_role_id = await cfg.get("moderator_role")
-        if mod_role_id:
-            try:
-                mod_role_id = int(mod_role_id)
-                if isinstance(interaction.user, discord.Member) and interaction.user.get_role(mod_role_id):
-                    return True
-            except ValueError:
-                pass
-
-        # Also check admin permission as fallback
-        if interaction.user.guild_permissions.administrator:
-            return True
-
-        await interaction.response.send_message("Only the opponent or a moderator can confirm this score.", ephemeral=True)
+        await interaction.response.send_message(
+            "Only the opponent or a moderator can resolve this score.", ephemeral=True
+        )
         return False
 
-    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
-    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.value = True
+    async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
-
-        async with get_db_manager().get_session() as session:
-            current = await MatchRepository(session).get_by_id(self.match_id)
-            if current and current.completed_at:
+        service = MatchReportService()
+        report = await service.get(self.report_id)
+        result = await getattr(service, self.action)(self.report_id, interaction.user.id)
+        if "error" in result:
+            await interaction.followup.send(result["error"], ephemeral=True)
+            if self.action == "confirm":
                 await interaction.message.edit(
-                    content=(
-                        f"Match {self.match_id} was already completed while this "
-                        "confirmation was open. Ask an admin to correct it with `/set_score`."
-                    ),
+                    content=f"Report #{self.report_id} for Match {report.match_id} could not be applied: {result['error']}",
                     view=None,
                 )
-                self.stop()
-                return
+            return
 
-        result = await MatchService().report_score(self.match_id, self.p1_goals, self.p2_goals, self.winner_side)
-        if "error" in result:
-            await interaction.message.edit(content=f"Error reporting score: {result['error']}", view=None)
+        reporter = f"<@{report.reporter_discord_id}>"
+        if self.action == "confirm":
+            content = f"Score confirmed and submitted successfully!\n{result['summary']}"
+            notice = f"{reporter}, your score for Match {report.match_id} was confirmed."
+        elif self.action == "reject":
+            content = f"Score submission was rejected for Match {report.match_id}."
+            notice = f"{reporter}, your score for Match {report.match_id} was rejected. Report again with `/report`."
         else:
-            summary = await MatchService().format_result_summary(self.match_id)
-            await interaction.message.edit(
-                content=f"Score confirmed and submitted successfully!\n{summary}",
-                view=None,
+            content = (
+                f"Score for Match {report.match_id} is **disputed** and waiting for a moderator."
             )
-        self.stop()
+            notice = f"{reporter}, your score for Match {report.match_id} was disputed; a moderator will review it."
+        await interaction.message.edit(content=content, view=None)
+        await interaction.followup.send(notice)
 
-    @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger)
-    async def reject_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.value = False
-        await interaction.response.defer()
-        await interaction.message.edit(content=f"Score submission was rejected for Match {self.match_id}.", view=None)
-        self.stop()
 
-    async def on_timeout(self):
-        self.value = None
+def score_confirm_view(report_id: int) -> discord.ui.View:
+    view = ReportingView(timeout=None)
+    for action in REPORT_ACTIONS:
+        view.add_item(ReportActionButton(action, report_id))
+    return view
 
 
 async def _send_confirmation(
@@ -90,48 +101,36 @@ async def _send_confirmation(
     my_goals: int,
     opponent_goals: int,
 ) -> None:
-    """Find the opponent and post a confirmation view for a reported score."""
-    db = get_db_manager()
-    opponent_discord_id = None
-    async with db.get_session() as session:
-        match = await MatchRepository(session).get_by_id(match_id)
-        if match:
-            for mp in match.match_players:
-                if mp.player and mp.player.discord_id != reporter_id:
-                    opponent_discord_id = mp.player.discord_id
-                    break
-
-    if not opponent_discord_id:
-        await interaction.followup.send(
-            "Could not find your opponent to confirm the score.", ephemeral=True
-        )
+    """Store the report and post persistent confirmation buttons for it."""
+    created = await MatchReportService().create_report(
+        match_id, reporter_id, p1_goals, p2_goals, winner_side
+    )
+    if "error" in created:
+        await interaction.followup.send(created["error"], ephemeral=True)
         return
 
-    cfg = Config()
-    score_channel_id = await cfg.get_channel_id("score_channel")
-    view = ConfirmView(
-        match_id, p1_goals, p2_goals, winner_side, opponent_discord_id
-    )
+    report = created["report"]
+    opponent_discord_id = created["opponent_discord_id"]
+    view = score_confirm_view(report.id)
     msg_content = (
         f"<@{opponent_discord_id}>, please confirm the score for Match {match_id}:\n"
         f"**<@{reporter_id}> reported {my_goals} - {opponent_goals}**"
     )
 
+    channel = None
+    score_channel_id = await Config().get_channel_id("score_channel")
     if score_channel_id and interaction.guild:
         channel = interaction.guild.get_channel(score_channel_id)
-        if channel:
-            await channel.send(content=msg_content, view=view)
-            await interaction.followup.send(
-                "Score submitted for confirmation. Please wait for your opponent to confirm.",
-                ephemeral=True,
-            )
-            return
+    if channel:
+        reply = "Score submitted for confirmation. Please wait for your opponent to confirm."
+    else:
+        # Fallback to the current channel (e.g. the match thread)
+        channel = interaction.channel
+        reply = "Score submitted for confirmation in this channel."
 
-    # Fallback to sending in the same channel (e.g. the match thread)
-    await interaction.channel.send(content=msg_content, view=view)
-    await interaction.followup.send(
-        "Score submitted for confirmation in this channel.", ephemeral=True
-    )
+    message = await channel.send(content=msg_content, view=view)
+    await MatchReportService().set_message(report.id, channel.id, message.id)
+    await interaction.followup.send(reply, ephemeral=True)
 
 
 class ScoreReportModal(discord.ui.Modal, title="Report Match Score"):
