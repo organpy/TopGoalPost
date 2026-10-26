@@ -622,6 +622,11 @@ alembic -c alembic.ini downgrade -1   # roll back last
 
 Migrations live in `migrations/versions/`.
 
+On startup the bot applies additive changes itself (new tables, new nullable
+columns, new indexes) and stamps the Alembic revision on databases that were
+created before Alembic was used. If the log warns that the database is behind,
+back up `data/bot.db` and run `alembic -c alembic.ini upgrade head`.
+
 ---
 
 <p id="troubleshooting"><img src="repopng/TPGtroubleshooting.png" alt="Troubleshooting" width="250"></p>

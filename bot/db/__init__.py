@@ -57,7 +57,9 @@ async def init_db():
 
     db = init_db_manager(db_url)
     await db.init()
-    await db.create_tables()
+    from .schema import sync_schema
+
+    await sync_schema(db.engine)
     return db
 
 __all__ = [
