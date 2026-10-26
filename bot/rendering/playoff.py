@@ -34,7 +34,7 @@ from .StandingsMaker import (
     _get_cached_link,
     _cache_rendered,
 )
-from . import asset_path
+from . import asset_path, save_png_atomic
 
 # Playoff cards are intentionally larger than the shared standings cards:
 # names get more room and the three score cells have a fixed width.
@@ -957,7 +957,7 @@ async def get_playoff(view: str = "full", season: int | None = None):
                 )
                 img = img.crop(crop)
 
-        img.save(fp=filename_copy, format="png")
+        save_png_atomic(img, filename_copy)
         return 0, filename_copy, table_hash
 
     result = await asyncio.to_thread(_render_playoff_bracket, slot_map, filename)

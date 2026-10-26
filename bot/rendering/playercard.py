@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from bot.services.player_stats import OpenState, PlayerStats
 from bot.utils.countries import COUNTRIES
-from . import asset_path
+from . import asset_path, save_png_atomic
 from .StandingsMaker import bg_color, get_flag, playoff_color, softgreen, softred
 
 CARD_W = 1000
@@ -332,5 +332,5 @@ def render_player_card(stats: PlayerStats, filename: str) -> str:
     _draw_stage_table(d, stats)
     _draw_awards(d, stats)
     _draw_footer(d, stats)
-    img.save(fp=filename, format="png")
+    save_png_atomic(img, filename)
     return filename

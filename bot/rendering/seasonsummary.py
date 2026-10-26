@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from bot.services.season_summary import SeasonAward, SeasonSummary, SummaryPlayer
 from bot.utils.countries import COUNTRIES
-from . import asset_path
+from . import asset_path, save_png_atomic
 from .StandingsMaker import bg_color, get_flag, playoff_color, softgreen, softred
 
 SUMMARY_W = 1200
@@ -358,5 +358,5 @@ def render_season_summary(summary: SeasonSummary, filename: str) -> str:
     _draw_podium(img, d, summary)
     _draw_leaders(img, d, summary)
     _draw_footer(d, summary)
-    img.save(fp=filename, format="png")
+    save_png_atomic(img, filename)
     return filename

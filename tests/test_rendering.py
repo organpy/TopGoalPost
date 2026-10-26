@@ -877,3 +877,23 @@ async def test_open_renders_one_file_per_season(db, tmp_path, monkeypatch):
     assert new_file.endswith("open_s2.png")
     assert (tmp_path / "open_s1.png").stat().st_size > 0
     assert (tmp_path / "open_s2.png").stat().st_size > 0
+
+
+def test_concurrent_atomic_saves_leave_a_valid_png(tmp_path):
+    """Two threads writing the same image never leave a partial file behind."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from PIL import Image as PILImage
+
+    from bot.rendering import save_png_atomic
+
+    target = tmp_path / "table.png"
+    images = [PILImage.new("RGBA", (400, 400), color) for color in ("red", "blue")] * 8
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda img: save_png_atomic(img, str(target)), images))
+
+    with PILImage.open(target) as result:
+        result.verify()
+    assert target.stat().st_size > 0
+    assert list(tmp_path.glob(".table-*")) == []

@@ -2,10 +2,42 @@
 works regardless of the current working directory."""
 
 import logging
+import os
+import tempfile
+import threading
 from pathlib import Path
 
 ASSETS_ROOT = Path(__file__).resolve().parents[2] / "assets"
 logger = logging.getLogger(__name__)
+
+
+_path_locks: dict[str, threading.Lock] = {}
+_path_locks_guard = threading.Lock()
+
+
+def _lock_for(path: Path) -> threading.Lock:
+    key = str(path.resolve())
+    with _path_locks_guard:
+        return _path_locks.setdefault(key, threading.Lock())
+
+
+def save_png_atomic(img, filename: str) -> str:
+    """Write ``img`` as PNG without ever exposing a half-written file.
+
+    Renders run in worker threads; two renders of the same image are
+    serialized, and readers only ever see the old or the new complete file.
+    """
+    path = Path(filename)
+    with _lock_for(path):
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                img.save(fh, format="png")
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+    return filename
 
 
 def asset_path(*parts: str) -> str:

@@ -20,7 +20,7 @@ from bot.db import (
     SeasonRepository,
 )
 from ._adapters import MatchShim, OpenPlayerShim
-from . import asset_path
+from . import asset_path, save_png_atomic
 
 name_w = 170
 row_h = 40
@@ -231,7 +231,7 @@ def _render_placeholder(filename: str, title: str) -> tuple[int, str, str]:
     d = ImageDraw.Draw(img)
     d.rectangle(xy=((0, 0), (600, 40)), fill=playoff_color)
     d.text(xy=(300, 20), text=title, fill="white", font=name_font, anchor="mm")
-    img.save(fp=filename, format="png")
+    save_png_atomic(img, filename)
     return 0, filename, ""
 
 
@@ -647,7 +647,7 @@ async def _get_open_table(
                 anchor="mm",
             )
             d.text(xy=(width - 0.5 * column_w, row_h * (i + 1.5)), text=f"{player.gd:+}", fill="white", font=name_font, anchor="mm")
-        img.save(fp=filename, format="png")
+        save_png_atomic(img, filename)
         if return_players:
             return 0, filename, table_hash, players_copy
         return 0, filename, table_hash
@@ -922,7 +922,7 @@ async def get_playin(season: int | None = None):
                         im=pfp,
                         mask=mask,
                     )
-        img.save(fp=filename_copy, format="png")
+        save_png_atomic(img, filename_copy)
         return 0, filename_copy, table_hash
 
     result = await asyncio.to_thread(
@@ -1037,7 +1037,7 @@ async def get_swiss(season: int | None = None):
                 top += row_h * (len(rows) + 1) + margin
             left += box_w + margin
 
-        img.save(fp=filename, format="png")
+        save_png_atomic(img, filename)
         return 0, filename, table_hash
 
     result = await asyncio.to_thread(_render_swiss)
