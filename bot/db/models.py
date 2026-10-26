@@ -136,7 +136,11 @@ class Event(Base):
         back_populates="event", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (Index("idx_event_season_type", "season", "type"),)
+    __table_args__ = (
+        Index("idx_event_season_type", "season", "type"),
+        # One event per stage per season; a unique index so startup sync can add it.
+        Index("uq_event_season_type", "season", "type", unique=True),
+    )
 
     def __repr__(self):
         return f"<Event(id={self.id}, name={self.name}, type={self.type.value})>"

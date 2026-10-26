@@ -619,14 +619,8 @@ class PlayinService:
 
     async def _get_or_create_playin_event(self, season: int):
         async with self.db.get_session() as session:
-            repo = EventRepository(session)
-            event = await repo.get_by_type_and_season(EventType.PLAYIN, season)
-            if not event:
-                event = await repo.create(
-                    name=f"Season {season} Playin",
-                    event_type=EventType.PLAYIN,
-                    season=season,
-                )
-                event.status = EventStatus.ACTIVE
-                await session.commit()
+            event = await EventRepository(session).get_or_create(
+                EventType.PLAYIN, season, f"Season {season} Playin"
+            )
+            await session.commit()
             return event

@@ -43,3 +43,20 @@ def test_upgrade_and_downgrade_round_trip(tmp_path):
 
     command.upgrade(cfg, "head")
     assert "match_reports" in _tables(db_path)
+
+
+def test_event_uniqueness_migration_refuses_duplicates(tmp_path):
+    import pytest
+
+    db_path = tmp_path / "dupes.db"
+    cfg = _alembic(db_path)
+    command.upgrade(cfg, "a4c9e1f7b302")
+    with sqlite3.connect(db_path) as conn:
+        for _ in range(2):
+            conn.execute(
+                "INSERT INTO events (name, type, season, status, created_at) "
+                "VALUES ('Open', 'OPEN', 1, 'ACTIVE', '2026-01-01')"
+            )
+
+    with pytest.raises(RuntimeError, match="Duplicate events found"):
+        command.upgrade(cfg, "head")

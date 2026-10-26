@@ -12,6 +12,7 @@ from pathlib import Path
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.schema import CreateIndex
 
 from .models import Base
@@ -48,9 +49,17 @@ def _sync(conn) -> list[str]:
 
         indexes = {i["name"] for i in insp.get_indexes(table.name)}
         for index in table.indexes:
-            if index.name not in indexes:
-                conn.execute(CreateIndex(index))
+            if index.name in indexes:
+                continue
+            try:
+                with conn.begin_nested():
+                    conn.execute(CreateIndex(index))
                 changes.append(f"added index {index.name}")
+            except DBAPIError:
+                # e.g. a unique index over existing duplicate rows.
+                logger.error(
+                    "Could not add index %s; fix the data and restart.", index.name, exc_info=True
+                )
 
     head = alembic_head()
     if not insp.has_table("alembic_version"):

@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import select, update, delete, and_, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -214,6 +215,24 @@ class EventRepository:
         event = Event(name=name, type=event_type, season=season)
         self.session.add(event)
         await self.session.flush()
+        return event
+
+    async def get_or_create(self, event_type: EventType, season: int, name: str) -> Event:
+        """Return the season's event of this type, creating it once.
+
+        A concurrent creator loses on the unique index and reads the winner's row.
+        """
+        event = await self.get_by_type_and_season(event_type, season)
+        if event:
+            return event
+        try:
+            async with self.session.begin_nested():
+                event = Event(
+                    name=name, type=event_type, season=season, status=EventStatus.ACTIVE
+                )
+                self.session.add(event)
+        except IntegrityError:
+            event = await self.get_by_type_and_season(event_type, season)
         return event
 
 

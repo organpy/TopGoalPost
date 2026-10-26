@@ -2380,3 +2380,58 @@ class TestSeasonClose:
         await svc.close_season(1)
         assert await svc.create_blocker() is None
         assert await svc.create_season(2) is True
+
+
+class TestEventUniqueness:
+    async def test_duplicate_insert_fails(self, db):
+        import pytest
+        from sqlalchemy.exc import IntegrityError
+
+        async with db.get_session() as session:
+            repo = EventRepository(session)
+            await repo.create("Open", EventType.OPEN, 1)
+            with pytest.raises(IntegrityError):
+                await repo.create("Open again", EventType.OPEN, 1)
+
+    async def test_concurrent_get_or_create_returns_one_event(self, tmp_path):
+        """Uses a file DB: the in-memory fixture shares one connection."""
+        import asyncio
+        from sqlalchemy import func, select
+        from bot.db import Event, get_db_manager, init_db_manager
+        from bot.services.pairing import PairingService
+
+        init_db_manager(f"sqlite+aiosqlite:///{tmp_path / 'race.db'}")
+        manager = get_db_manager()
+        await manager.init()
+        await manager.create_tables()
+        try:
+            events = await asyncio.gather(
+                *(PairingService()._get_or_create_event(EventType.SWISS, 1) for _ in range(5))
+            )
+            async with manager.get_session() as session:
+                count = (await session.execute(select(func.count(Event.id)))).scalar()
+        finally:
+            await manager.close()
+        assert len({e.id for e in events}) == 1
+        assert count == 1
+
+    async def test_get_or_create_recovers_from_race(self, db, monkeypatch):
+        from bot.db.repositories import EventRepository as Repo
+
+        async with db.get_session() as session:
+            first = await Repo(session).create("Open", EventType.OPEN, 1)
+            await session.commit()
+
+        real_get = Repo.get_by_type_and_season
+        calls = {"n": 0}
+
+        async def stale_then_real(self, event_type, season):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return None  # another task has not committed yet, as far as we saw
+            return await real_get(self, event_type, season)
+
+        monkeypatch.setattr(Repo, "get_by_type_and_season", stale_then_real)
+        async with db.get_session() as session:
+            event = await Repo(session).get_or_create(EventType.OPEN, 1, "Open")
+        assert event.id == first.id

@@ -229,22 +229,16 @@ class PairingService:
 
     async def _get_or_create_event(self, event_type: EventType, season: int) -> Event:
         async with self.db.get_session() as session:
-            repo = EventRepository(session)
-            event = await repo.get_by_type_and_season(event_type, season)
-            if not event:
-                event_names = {
-                    EventType.OPEN: f"Season {season} Open",
-                    EventType.PLAYIN: f"Season {season} Playin",
-                    EventType.SWISS: f"Season {season} Swiss",
-                    EventType.PLAYOFF: f"Season {season} Playoffs",
-                }
-                event = await repo.create(
-                    name=event_names.get(event_type, f"Season {season} Event"),
-                    event_type=event_type,
-                    season=season,
-                )
-                event.status = EventStatus.ACTIVE
-                await session.commit()
+            event_names = {
+                EventType.OPEN: f"Season {season} Open",
+                EventType.PLAYIN: f"Season {season} Playin",
+                EventType.SWISS: f"Season {season} Swiss",
+                EventType.PLAYOFF: f"Season {season} Playoffs",
+            }
+            event = await EventRepository(session).get_or_create(
+                event_type, season, event_names[event_type]
+            )
+            await session.commit()
             return event
 
     async def pair_open(self, event_id: int, force: bool = False) -> tuple[int, Optional[int], Optional[str]]:
