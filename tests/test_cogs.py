@@ -1730,3 +1730,39 @@ def test_bot_messages_reference_existing_commands():
             elif sub and base in {"season", "tourney"} and full not in pool:
                 missing.append(f"{path.name}: {kind}{full}")
     assert missing == []
+
+
+class TestDashboardReadiness:
+    def test_buttons_disabled_outside_their_stage(self, mock_bot):
+        from bot.ui.dashboard import DashboardView
+
+        view = DashboardView(mock_bot, MagicMock(), state="SWISS")
+        assert view.gen_open.disabled
+        assert view.start_playins.disabled
+        assert not view.gen_swiss.disabled
+        assert not view.seed_playoff.disabled
+        assert view.finish_playins.disabled
+        assert not view.next_step.disabled
+
+    def test_readiness_text(self):
+        from bot.ui.dashboard import readiness_text
+
+        assert "Ready for **OPEN**" in readiness_text(
+            {"action": "start_open", "ready": True, "next_state": "OPEN", "blockers": []}
+        )
+        assert "❌ 3 OPEN match(es) unplayed." in readiness_text(
+            {"action": "start_playins", "ready": False, "next_state": "PLAYIN",
+             "blockers": ["3 OPEN match(es) unplayed."]}
+        )
+
+    async def test_clean_threads_asks_first(self, mock_bot, mock_interaction):
+        from bot.ui.dashboard import DashboardView
+
+        view = DashboardView(mock_bot, MagicMock())
+        with patch("bot.ui.dashboard.confirm", AsyncMock(return_value=False)) as ask, patch(
+            "bot.ui.dashboard.cleanse_scheduling_threads", AsyncMock()
+        ) as cleanse:
+            await view.clean_threads.callback(mock_interaction)
+        ask.assert_awaited_once()
+        cleanse.assert_not_awaited()
+        mock_interaction.followup.send.assert_awaited_with("Cancelled.", ephemeral=True)

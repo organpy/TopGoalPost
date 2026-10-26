@@ -14,6 +14,7 @@ from bot.services.playin import PlayinService
 from bot.services.tournament_flow import TournamentFlowService, STAGE_EVENTS
 from bot.utils.threads import cleanse_scheduling_threads, create_scheduling_threads
 from bot.config import Config
+from bot.ui.confirm import confirm
 from bot.utils.errors import ReportingView
 
 
@@ -105,15 +106,45 @@ class SkipOpenModal(discord.ui.Modal, title="Players skipping Open"):
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
+# Buttons that only make sense in some stages. Anything not listed is always on.
+BUTTON_STATES = {
+    "gen_open": ("SIGNUP", "OPEN"),
+    "start_playins": ("OPEN", "PLAYIN"),
+    "gen_swiss": ("PLAYIN", "SWISS"),
+    "seed_playoff": ("SWISS", "PLAYOFF"),
+    "sync_open": ("OPEN", "PLAYIN"),
+    "skip_open": ("SIGNUP",),
+    "finish_playins": ("PLAYIN",),
+    "make_threads": ("OPEN", "PLAYIN", "SWISS", "PLAYOFF"),
+    "clean_threads": ("OPEN", "PLAYIN", "SWISS", "PLAYOFF"),
+}
+
+
+def readiness_text(readiness: dict) -> str:
+    """Checklist for the dashboard: what the next stage action still needs."""
+    if not readiness.get("action"):
+        return "No stage action for this state."
+    if readiness["ready"]:
+        return f"✅ Ready for **{readiness['next_state']}**."
+    return "\n".join(f"❌ {blocker}" for blocker in readiness["blockers"])
+
+
 class DashboardView(ReportingView):
-    def __init__(self, bot: commands.Bot, embed: discord.Embed):
+    def __init__(self, bot: commands.Bot, embed: discord.Embed, state: str | None = None):
         super().__init__(timeout=None)
         self.bot = bot
         self.original_embed = embed
+        if state:
+            self.apply_state(state)
         self.season_service = SeasonService()
         self.pairing_service = PairingService()
         self.playin_service = PlayinService()
         self.flow_service = TournamentFlowService()
+
+    def apply_state(self, state: str) -> None:
+        """Disable actions that the current stage would refuse anyway."""
+        for name, allowed in BUTTON_STATES.items():
+            getattr(self, name).disabled = state not in allowed
 
     async def _run_stage(self, interaction: discord.Interaction, action) -> None:
         await interaction.response.defer(ephemeral=True)
@@ -216,6 +247,11 @@ class DashboardView(ReportingView):
     @discord.ui.button(label="Clean Threads", style=discord.ButtonStyle.danger, emoji="🧹", row=2)
     async def clean_threads(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
+        if not await confirm(
+            interaction, "Remove every registered player without an unplayed match from all threads?"
+        ):
+            await interaction.followup.send("Cancelled.", ephemeral=True)
+            return
         ctx = await self._thread_context(interaction)
         if not ctx:
             return
@@ -303,6 +339,10 @@ class DashboardCog(commands.Cog):
 
         flow = TournamentFlowService()
         flow_info = await flow.get_status()
+        if flow_info.get("readiness"):
+            embed.add_field(
+                name="Readiness", value=readiness_text(flow_info["readiness"]), inline=False
+            )
         if flow_info.get("next_action"):
             embed.add_field(name="Next step", value=flow_info["next_action"], inline=False)
 
@@ -324,12 +364,17 @@ class DashboardCog(commands.Cog):
                 embed.add_field(name="Players", value=f"**{total}** total\n{seeds} seeded\n{open_p} open", inline=True)
                 embed.add_field(name="Channels", value=f"Match: {mcs}\nScore: {scs}", inline=True)
                 embed.add_field(
-                    name="Stage Actions",
-                    value="Row 0: **Open / Start Playins / Start Swiss / Playoffs** · Row 1: **Next Step / Sync Open**\nPlayin ladder is pre-created; a CUT round appears only if needed · Swiss is fixed at 32",
+                    name="Buttons",
+                    value=(
+                        "**Stage:** Open · Start Playins · Start Swiss · Playoffs\n"
+                        "**Repair:** Next Step · Sync Open · Skip Open · Finish Playins\n"
+                        "**Threads:** Threads · Clean Threads (asks first)\n"
+                        "**Config** and **Boards** below. Buttons for other stages are disabled."
+                    ),
                     inline=False,
                 )
 
-        view = DashboardView(self.bot, embed)
+        view = DashboardView(self.bot, embed, state=state)
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
