@@ -163,6 +163,7 @@ async def test_button_rebuilt_from_custom_id_resolves_report(db):
 
     match_id = await _scheduled_match(db)
     report = (await MatchReportService().create_report(match_id, 111, 3, 1, 0))["report"]
+    await MatchReportService().set_message(report.id, channel_id=10, message_id=20)
     custom_id = score_confirm_view(report.id).children[0].custom_id
     assert custom_id == f"matchreport:confirm:{report.id}"
 
@@ -173,9 +174,96 @@ async def test_button_rebuilt_from_custom_id_resolves_report(db):
     interaction.user.id = 222
     interaction.response.defer = AsyncMock()
     interaction.followup.send = AsyncMock()
-    interaction.message.edit = AsyncMock()
+    message = MagicMock(edit=AsyncMock())
+    channel = MagicMock(fetch_message=AsyncMock(return_value=message), send=AsyncMock())
+    interaction.client.get_channel = MagicMock(return_value=channel)
     assert await button.interaction_check(interaction)
     await button.callback(interaction)
 
     assert await _completed(db, match_id)
-    assert "confirmed" in interaction.message.edit.call_args.kwargs["content"]
+    channel.fetch_message.assert_awaited_once_with(20)
+    assert "confirmed" in message.edit.call_args.kwargs["content"]
+    assert "<@111>" in channel.send.call_args.args[0]
+
+
+def _member(user_id: int, roles=(), admin=False):
+    from unittest.mock import MagicMock
+
+    member = MagicMock()
+    member.id = user_id
+    member.guild_permissions.administrator = admin
+    member.roles = [MagicMock(id=r) for r in roles]
+    return member
+
+
+class TestModQueue:
+    async def test_moderator_lists_and_resolves_dispute(self, db):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from bot.cogs.matches.match_cog import MatchCog
+        from bot.cogs.checks import moderator_predicate_app
+        from bot.config import Config
+        from bot.services.match_report import MatchReportService
+        from bot.ui.report import apply_report_action
+
+        await Config().set("moderator_role", "555")
+        match_id = await _scheduled_match(db)
+        svc = MatchReportService()
+        report = (await svc.create_report(match_id, 111, 3, 1, 0))["report"]
+        await svc.dispute(report.id, 222, "He lagged")
+
+        interaction = MagicMock()
+        interaction.user = _member(999, roles=[555])
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+        assert await moderator_predicate_app(interaction)
+
+        cog = MatchCog(MagicMock())
+        await cog.reports_cmd.callback(cog, interaction)
+        texts = [c.args[0] for c in interaction.followup.send.call_args_list]
+        assert any("Report #" in t and "DISPUTED" in t and "He lagged" in t for t in texts)
+        assert any("Alice vs Bob" in t for t in texts)
+
+        interaction.client = MagicMock()
+        await apply_report_action(interaction, "confirm", report.id)
+        assert await _completed(db, match_id)
+
+    async def test_non_moderator_cannot_open_queue(self, db):
+        from unittest.mock import MagicMock
+
+        import pytest
+        from discord import app_commands
+
+        from bot.cogs.checks import moderator_predicate_app
+
+        interaction = MagicMock()
+        interaction.user = _member(999)
+        with pytest.raises(app_commands.CheckFailure):
+            await moderator_predicate_app(interaction)
+
+    async def test_notification_failure_is_logged(self, db, caplog):
+        from unittest.mock import AsyncMock, MagicMock
+
+        import discord
+
+        from bot.services.match_report import MatchReportService
+        from bot.ui.report import apply_report_action
+
+        match_id = await _scheduled_match(db)
+        svc = MatchReportService()
+        report = (await svc.create_report(match_id, 111, 3, 1, 0))["report"]
+        await svc.set_message(report.id, channel_id=10, message_id=20)
+
+        channel = MagicMock()
+        channel.fetch_message = AsyncMock(side_effect=discord.HTTPException(MagicMock(status=404), "gone"))
+        channel.send = AsyncMock(side_effect=discord.HTTPException(MagicMock(status=403), "nope"))
+        interaction = MagicMock()
+        interaction.user.id = 222
+        interaction.client.get_channel = MagicMock(return_value=channel)
+        interaction.followup.send = AsyncMock()
+
+        await apply_report_action(interaction, "reject", report.id, "wrong score")
+
+        assert (await svc.get(report.id)).reason == "wrong score"
+        assert "Could not update report" in caplog.text
+        assert "Could not notify players" in caplog.text

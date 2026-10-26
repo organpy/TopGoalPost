@@ -1,5 +1,7 @@
 """Score reporting modal, preset buttons, and confirmation for match reporting."""
 
+import logging
+
 import discord
 
 from bot.utils.errors import ReportingView
@@ -8,6 +10,8 @@ from bot.cogs.checks import is_moderator
 from bot.config import Config
 from bot.services.match_report import MatchReportService
 
+
+logger = logging.getLogger(__name__)
 
 REPORT_ACTIONS = {
     "confirm": ("Confirm", discord.ButtonStyle.success),
@@ -55,33 +59,107 @@ class ReportActionButton(
         return False
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        service = MatchReportService()
-        report = await service.get(self.report_id)
-        result = await getattr(service, self.action)(self.report_id, interaction.user.id)
-        if "error" in result:
-            await interaction.followup.send(result["error"], ephemeral=True)
-            if self.action == "confirm":
-                await interaction.message.edit(
-                    content=f"Report #{self.report_id} for Match {report.match_id} could not be applied: {result['error']}",
-                    view=None,
-                )
-            return
-
-        reporter = f"<@{report.reporter_discord_id}>"
         if self.action == "confirm":
-            content = f"Score confirmed and submitted successfully!\n{result['summary']}"
-            notice = f"{reporter}, your score for Match {report.match_id} was confirmed."
-        elif self.action == "reject":
-            content = f"Score submission was rejected for Match {report.match_id}."
-            notice = f"{reporter}, your score for Match {report.match_id} was rejected. Report again with `/report`."
+            await interaction.response.defer()
+            await apply_report_action(interaction, self.action, self.report_id)
         else:
-            content = (
-                f"Score for Match {report.match_id} is **disputed** and waiting for a moderator."
+            await interaction.response.send_modal(ReportReasonModal(self.action, self.report_id))
+
+
+class ReportReasonModal(discord.ui.Modal):
+    def __init__(self, action: str, report_id: int):
+        super().__init__(title=f"{REPORT_ACTIONS[action][0]} score report #{report_id}")
+        self.action = action
+        self.report_id = report_id
+        self.reason = discord.ui.TextInput(
+            label="Reason (optional)",
+            style=discord.TextStyle.paragraph,
+            required=False,
+            max_length=500,
+        )
+        self.add_item(self.reason)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        await apply_report_action(
+            interaction, self.action, self.report_id, self.reason.value or None
+        )
+
+
+PAST_TENSE = {"confirm": "confirmed", "reject": "rejected", "dispute": "disputed"}
+
+
+async def apply_report_action(
+    interaction: discord.Interaction, action: str, report_id: int, reason: str | None = None
+) -> None:
+    """Resolve a report, update its public message, and notify both players."""
+    service = MatchReportService()
+    report = await service.get(report_id)
+    if action == "confirm":
+        result = await service.confirm(report_id, interaction.user.id)
+    else:
+        result = await getattr(service, action)(report_id, interaction.user.id, reason)
+
+    if "error" in result:
+        await interaction.followup.send(result["error"], ephemeral=True)
+        if action == "confirm" and report:
+            await publish_outcome(
+                interaction.client, report,
+                f"Report #{report_id} for Match {report.match_id} could not be applied: {result['error']}",
             )
-            notice = f"{reporter}, your score for Match {report.match_id} was disputed; a moderator will review it."
-        await interaction.message.edit(content=content, view=None)
-        await interaction.followup.send(notice)
+        return
+
+    if action == "confirm":
+        content = f"Score confirmed and submitted successfully!\n{result['summary']}"
+    else:
+        content = f"Score for Match {report.match_id} was **{PAST_TENSE[action]}**."
+    if reason:
+        content += f"\nReason: {reason}"
+    await publish_outcome(interaction.client, report, content)
+
+    players = " ".join(f"<@{pid}>" for pid in await service.participants(report))
+    notice = f"{players} — the score for Match {report.match_id} was {PAST_TENSE[action]}."
+    if action == "reject":
+        notice += " Report again with `/report`."
+    elif action == "dispute":
+        notice += " A moderator will review it in `/reports`."
+    await _notify(interaction.client, report, notice)
+    await interaction.followup.send(f"Report #{report_id} {PAST_TENSE[action]}.", ephemeral=True)
+
+
+async def _report_channel(client: discord.Client, report):
+    if not report.channel_id:
+        return None
+    channel = client.get_channel(report.channel_id)
+    if channel is None:
+        try:
+            channel = await client.fetch_channel(report.channel_id)
+        except discord.HTTPException:
+            logger.warning("Report #%s channel %s unavailable", report.id, report.channel_id)
+            return None
+    return channel
+
+
+async def publish_outcome(client: discord.Client, report, content: str) -> None:
+    """Replace the public confirmation message so stale buttons disappear."""
+    channel = await _report_channel(client, report)
+    if channel is None or not report.message_id:
+        return
+    try:
+        message = await channel.fetch_message(report.message_id)
+        await message.edit(content=content, view=None)
+    except discord.HTTPException:
+        logger.warning("Could not update report #%s message", report.id, exc_info=True)
+
+
+async def _notify(client: discord.Client, report, notice: str) -> None:
+    channel = await _report_channel(client, report)
+    if channel is None:
+        return
+    try:
+        await channel.send(notice)
+    except discord.HTTPException:
+        logger.warning("Could not notify players for report #%s", report.id, exc_info=True)
 
 
 def score_confirm_view(report_id: int) -> discord.ui.View:

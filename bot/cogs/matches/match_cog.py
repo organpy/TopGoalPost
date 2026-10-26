@@ -5,14 +5,15 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
-from bot.cogs.checks import require_host_app
+from bot.cogs.checks import require_host_app, require_moderator_app
 from discord import app_commands
 
 from bot.services.match import MatchService
 from bot.services.season import SeasonService
 from bot.db import get_db_manager, MatchPlayerRepository, PlayerRepository
 from bot.ui.autocomplete import username_autocomplete
-from bot.ui.report import ReportScoreView
+from bot.ui.report import ReportScoreView, score_confirm_view
+from bot.services.match_report import MatchReportService
 
 
 
@@ -399,6 +400,37 @@ class MatchCog(commands.Cog):
             f"Admin override: {summary}{suffix}",
             ephemeral=True,
         )
+
+    @app_commands.command(name="reports", description="Pending and disputed score reports (moderators)")
+    @require_moderator_app()
+    async def reports_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        service = MatchReportService()
+        reports = await service.list_open()
+        if not reports:
+            await interaction.followup.send("No pending or disputed reports.", ephemeral=True)
+            return
+
+        shown = reports[:10]
+        await interaction.followup.send(
+            f"**{len(reports)} open report(s)**"
+            + (f" — showing the oldest {len(shown)}." if len(reports) > len(shown) else "."),
+            ephemeral=True,
+        )
+        for report in shown:
+            label = await service.describe(report)
+            side = "P1" if report.winner_side == 0 else "P2"
+            lines = [
+                f"**Report #{report.id}** · {report.status.value.upper()} · Match {report.match_id}",
+                label,
+                f"Reported score: {report.p1_goals}-{report.p2_goals} ({side} wins) "
+                f"by <@{report.reporter_discord_id}>",
+            ]
+            if report.reason:
+                lines.append(f"Reason: {report.reason}")
+            await interaction.followup.send(
+                "\n".join(lines), view=score_confirm_view(report.id), ephemeral=True
+            )
 
 
 async def setup(bot):

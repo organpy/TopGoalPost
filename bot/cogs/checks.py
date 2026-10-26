@@ -54,6 +54,17 @@ async def host_predicate_app(interaction: discord.Interaction) -> bool:
     return True
 
 
+async def moderator_predicate_app(interaction: discord.Interaction) -> bool:
+    """Slash-command predicate: host or configured moderator role."""
+    if not await is_moderator(interaction.user, interaction.guild):
+        raise app_commands.CheckFailure("Requires a moderator or host role.")
+    return True
+
+
+def require_moderator_app():
+    return app_commands.check(moderator_predicate_app)
+
+
 def require_host():
     return commands.check(host_predicate)
 

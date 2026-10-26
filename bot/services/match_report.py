@@ -6,8 +6,12 @@ restart. Only ``confirm`` applies the score, through ``MatchService``.
 
 from typing import Any, Optional
 
+from sqlalchemy.orm import selectinload
+
 from bot.db import (
     get_db_manager,
+    Match,
+    MatchPlayer,
     MatchReport,
     MatchReportRepository,
     MatchRepository,
@@ -99,6 +103,21 @@ class MatchReportService:
             if not match:
                 return []
             return [mp.player.discord_id for mp in match.match_players if mp.player]
+
+    async def describe(self, report: MatchReport) -> str:
+        """Match label such as ``#12 OPEN: Alice vs Bob``."""
+        async with self.db.get_session() as session:
+            match = await session.get(
+                Match, report.match_id,
+                options=[
+                    selectinload(Match.match_players).selectinload(MatchPlayer.player),
+                    selectinload(Match.event),
+                ],
+            )
+            if not match or len(match.match_players) < 2:
+                return f"Match {report.match_id}"
+            mps = sorted(match.match_players, key=lambda mp: mp.side)
+            return self.match_service._format_match_label(match, mps)
 
     async def can_resolve(self, report: MatchReport, actor_id: int, is_mod: bool) -> bool:
         """The opponent of the reporter, or any moderator."""
