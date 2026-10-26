@@ -2313,3 +2313,70 @@ async def test_swiss_rescore_clears_and_refills_descendants(db):
     assert filled_before["SW-R2-L1"] == [p2_id]
     assert filled_after["SW-R2-U1"] == [p2_id]
     assert filled_after["SW-R2-L1"] == [p1_id]
+
+
+async def _playoff_season(db, gf_wins: int):
+    """Season 1 in PLAYOFF with ``gf_wins`` grand-final games won by Champ."""
+    from datetime import datetime
+    from bot.config import Config
+    from bot.db import Player
+
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        champ = Player(discord_id=501, name="Champ", country="US")
+        second = Player(discord_id=502, name="Second", country="US")
+        session.add_all([champ, second])
+        event = await EventRepository(session).create("Playoffs", EventType.PLAYOFF, 1)
+        await session.flush()
+        for game in range(1, gf_wins + 1):
+            match = Match(event_id=event.id, bracket_slot="GF-M1", series_game=game,
+                          completed_at=datetime.utcnow())
+            session.add(match)
+            await session.flush()
+            session.add(MatchPlayer(match_id=match.id, side=0, player_id=champ.id, goals=3, is_winner=True))
+            session.add(MatchPlayer(match_id=match.id, side=1, player_id=second.id, goals=1, is_winner=False))
+        await session.commit()
+    await Config().set_season_state("PLAYOFF")
+
+
+class TestSeasonClose:
+    async def test_close_with_incomplete_grand_final_fails(self, db):
+        from bot.services.season import SeasonService
+
+        await _playoff_season(db, gf_wins=1)
+        result = await SeasonService().close_season(1)
+        assert result["error"] == "The grand final is not complete yet."
+        assert await SeasonService().get_state() == "PLAYOFF"
+
+    async def test_close_records_champion(self, db):
+        from bot.services.season import SeasonService
+
+        await _playoff_season(db, gf_wins=2)
+        svc = SeasonService()
+        result = await svc.close_season(1)
+
+        assert result == {"ok": True, "season": 1, "champion": "Champ", "runner_up": "Second"}
+        season = await svc.get_season(1)
+        assert season.champion_id is not None and season.ended_at is not None
+        assert await svc.get_state() == "OFFSEASON"
+        async with db.get_session() as session:
+            event = await EventRepository(session).get_by_type_and_season(EventType.PLAYOFF, 1)
+            assert event.status == EventStatus.COMPLETED
+
+    async def test_create_requires_close_or_force(self, db):
+        from bot.services.season import SeasonService
+
+        await _playoff_season(db, gf_wins=2)
+        svc = SeasonService()
+        assert "still running" in await svc.create_blocker()
+        assert await svc.create_season(2) is False
+        assert await svc.create_season(2, force=True) is True
+
+    async def test_create_after_close_succeeds(self, db):
+        from bot.services.season import SeasonService
+
+        await _playoff_season(db, gf_wins=2)
+        svc = SeasonService()
+        await svc.close_season(1)
+        assert await svc.create_blocker() is None
+        assert await svc.create_season(2) is True

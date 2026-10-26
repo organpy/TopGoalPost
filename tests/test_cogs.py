@@ -81,6 +81,7 @@ def mock_bot():
     bot = MagicMock()
     bot.user = MagicMock()
     bot.user.id = 111111
+    bot.change_presence = AsyncMock()
     return bot
 
 
@@ -184,7 +185,7 @@ class TestSeasonAdminCog:
     def test_slash_season_group_has_subcommands(self, mock_bot):
         cog = SeasonAdminCog(mock_bot)
         group = next(c for c in cog.__cog_app_commands__ if c.name == "season")
-        assert {c.name for c in group.commands} == {"status", "create", "advance"}
+        assert {c.name for c in group.commands} == {"status", "create", "advance", "close"}
         assert group.default_permissions is None
 
     async def test_slash_advance_illegal_transition(self, mock_interaction, mock_bot, db):

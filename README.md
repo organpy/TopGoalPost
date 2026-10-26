@@ -334,8 +334,9 @@ the reset card if one is played.
 | Command | Description |
 |---------|-------------|
 | `/season status` | Current season number, state and next state |
-| `/season create N` | Create Season N (archives the current season, history kept) |
+| `/season create N [force]` | Create Season N (archives the current season, history kept). Refuses an unclosed season unless `force` |
 | `/season advance STATE [force]` | Move to the next state; `force` skips/rewinds (logged) |
+| `/season close` | After the grand final: record the champion, post the recap, go to OFFSEASON |
 
 `!season status|create|advance` remain as prefix equivalents.
 
@@ -519,6 +520,7 @@ All config lives in the `settings` DB table (flat key–value). Set via
 | `moderator_role` | Role with score-confirm permissions |
 | `match_channel` | Parent channel for match scheduling threads |
 | `score_channel` | Channel where score confirmations are posted |
+| `announcements_channel` | Public stage and season-recap announcements |
 | `agreements_channel` | Channel where agreed match times are announced |
 | `admin_id` | Discord ID of the head admin (shown in error messages) |
 | `admin_roles` | Comma-separated role IDs allowed to use admin/host commands |

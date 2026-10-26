@@ -4,10 +4,15 @@ Handles season lifecycle: creation, advancing stages, archiving.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional
+
+from sqlalchemy import func, select, update
 
 from bot.db import (
     get_db_manager,
+    Event,
+    EventStatus,
     Season,
     SeasonStatus,
     SeasonRepository,
@@ -15,6 +20,7 @@ from bot.db import (
     ImageCacheRepository,
 )
 from bot.config import Config
+from bot.services.season_results import get_season_result
 from bot.rendering import ASSETS_ROOT
 
 logger = logging.getLogger(__name__)
@@ -89,14 +95,36 @@ class SeasonService:
             except (TypeError, ValueError):
                 return None
 
-    async def create_season(self, season_number: int) -> bool:
+    async def create_blocker(self) -> Optional[str]:
+        """Why creating a new season would archive unfinished work, if it would."""
+        async with self.db.get_session() as session:
+            active = await SeasonRepository(session).get_active()
+            if not active or active.ended_at is not None:
+                return None
+            has_events = (
+                await session.execute(
+                    select(func.count(Event.id)).where(Event.season == active.number)
+                )
+            ).scalar()
+        if not has_events:
+            return None
+        return (
+            f"Season {active.number} is still running. Close it with `/season close` "
+            "first, or pass force to archive it unfinished."
+        )
+
+    async def create_season(self, season_number: int, force: bool = False) -> bool:
         """Create a new season and archive the previous one.
 
         History is kept: archived seasons keep their events, matches,
         registrations and players so brackets and stats stay viewable. Archived
         seasons cannot be reopened; create a new number instead.
-        Also resets the config state to OFFSEASON so it can be manually advanced.
+        Refuses to archive a season that has events but was never closed,
+        unless ``force``. Resets the state to OFFSEASON.
         """
+        if not force and await self.create_blocker():
+            return False
+
         async with self.db.get_session() as session:
             repo = SeasonRepository(session)
 
@@ -106,6 +134,8 @@ class SeasonService:
 
             active = await repo.get_active()
             if active:
+                if active.ended_at is None:
+                    logger.warning("Archiving unfinished season %s", active.number)
                 await repo.archive(active.number)
 
             session.add(Season(number=season_number, status=SeasonStatus.ACTIVE))
@@ -115,6 +145,39 @@ class SeasonService:
 
         await self.advance_state("OFFSEASON", force=True)
         return True
+
+    async def close_season(self, season: int, force: bool = False) -> dict:
+        """Finish a season: record the champion, complete events, go OFFSEASON.
+
+        The season stays active (and viewable) until the next one is created.
+        """
+        state = await self.get_state()
+        if state != "PLAYOFF" and not force:
+            return {"error": f"Seasons close from PLAYOFF (currently {state})."}
+
+        async with self.db.get_session() as session:
+            row = await SeasonRepository(session).get_by_number(season)
+            if not row:
+                return {"error": f"Season {season} not found."}
+            if row.ended_at is not None:
+                return {"error": f"Season {season} is already closed."}
+
+            result = await get_season_result(session, season)
+            if result.champion is None or result.deciding_slot is None:
+                return {"error": "The grand final is not complete yet."}
+
+            row.champion_id = result.champion.id
+            row.ended_at = datetime.utcnow()
+            await session.execute(
+                update(Event).where(Event.season == season).values(status=EventStatus.COMPLETED)
+            )
+            await session.commit()
+            champion, runner_up = result.champion.name, (
+                result.runner_up.name if result.runner_up else None
+            )
+
+        await self.advance_state("OFFSEASON", force=force)
+        return {"ok": True, "season": season, "champion": champion, "runner_up": runner_up}
 
     async def is_active(self, season: int) -> bool:
         """Only the current season may be mutated; archived ones are read-only.

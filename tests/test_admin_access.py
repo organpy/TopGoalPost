@@ -129,7 +129,7 @@ async def old_season_data(db):
 class TestSeasonArchiving:
     async def test_create_new_season_keeps_old_data(self, db, old_season_data):
         svc = SeasonService()
-        assert await svc.create_season(2) is True
+        assert await svc.create_season(2, force=True) is True
 
         async with db.get_session() as session:
             players = (await session.execute(Player.__table__.select())).fetchall()
@@ -149,7 +149,7 @@ class TestSeasonArchiving:
 
     async def test_archived_season_cannot_be_reopened(self, db, old_season_data):
         svc = SeasonService()
-        await svc.create_season(2)
+        await svc.create_season(2, force=True)
 
         assert await svc.create_season(1) is False
         assert (await svc.get_season(1)).status.value == "archived"
@@ -180,7 +180,7 @@ class TestSeasonArchiving:
             player = await PlayerRepository(session).get_by_discord_id(2000)
             player_id = player.id
 
-        await SeasonService().create_season(2)
+        await SeasonService().create_season(2, force=True)
 
         stats = await PlayerStatsService().get_stats(player_id, 1)
         assert stats.open_state is OpenState.PLAYED
@@ -194,7 +194,7 @@ class TestSeasonArchiving:
         await Config().set("stage", "PLAYOFF")
 
         svc = SeasonService()
-        await svc.create_season(2)
+        await svc.create_season(2, force=True)
         assert await svc.get_state() == "OFFSEASON"
 
     async def test_same_number_returns_false_unchanged(self, db, old_season_data):

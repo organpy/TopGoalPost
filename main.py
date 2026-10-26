@@ -125,13 +125,9 @@ class TopGoalPostBot(commands.Bot):
 
     async def on_ready(self):
         logger.info(f"Logged in as {self.user.name} (ID: {self.user.id})")
-        try:
-            from bot.config import Config
-            state = await Config().get_season_state()
-            activity_name = "/signup" if state in ("OFFSEASON", "SIGNUP") else "/report"
-            await self.change_presence(activity=discord.Game(name=activity_name))
-        except Exception as e:
-            logger.warning(f"Could not set presence: {e}")
+        from bot.utils.announce import refresh_presence
+
+        await refresh_presence(self)
         logger.info("Bot is ready!")
 
 

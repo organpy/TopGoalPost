@@ -16,6 +16,7 @@ from bot.services.signup import SignupService
 from bot.services.tournament_flow import TournamentFlowService, STAGE_EVENTS
 from bot.db import get_db_manager, MatchRepository, EventType, EventRepository
 from bot.ui.autocomplete import player_list_autocomplete
+from bot.utils.announce import announce_stage
 from bot.utils.threads import cleanse_scheduling_threads, create_scheduling_threads
 
 logger = logging.getLogger(__name__)
@@ -156,8 +157,10 @@ class TournamentCog(commands.Cog):
     async def _run_stage(self, guild, action, season_num: int, *args) -> dict:
         """Run a flow-service stage action and clean stage roles if it advanced."""
         result = await action(season_num, *args)
-        if result.get("advanced_from") and guild:
-            await self._cleanup_stage_roles(guild, result["advanced_from"], result["state"])
+        if result.get("advanced_from"):
+            if guild:
+                await self._cleanup_stage_roles(guild, result["advanced_from"], result["state"])
+            await announce_stage(self.bot, result["state"])
         return result
 
     async def _stage_prefix(self, ctx, action, *args) -> None:

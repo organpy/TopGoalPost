@@ -16,6 +16,7 @@ from bot.cogs.checks import require_host, require_host_app
 from bot.services.season import SeasonService, STATE_ORDER, next_state, transition_error
 from bot.db import get_db_manager, PlayerSeason, SeasonStatus
 from bot.config import Config
+from bot.utils.announce import announce, announce_stage, refresh_presence
 
 
 STATE_CHOICES = [app_commands.Choice(name=state, value=state) for state in STATE_ORDER]
@@ -55,19 +56,25 @@ class SeasonAdminCog(commands.Cog):
             embed.description = "No active season. Run `/season create <N>`."
         return embed
 
-    @season_group.command(name="create", help="Create a new season (archives the current one, history is kept)")
+    @season_group.command(
+        name="create",
+        help="Create a new season (archives the current one, history is kept). "
+        "Add `force` to archive an unclosed season.",
+    )
     @require_host()
-    async def create_cmd(self, ctx: commands.Context, number: int):
-        await ctx.send(await self.create_message(number))
+    async def create_cmd(self, ctx: commands.Context, number: int, force: str = ""):
+        await ctx.send(await self.create_message(number, force.lower() == "force"))
 
-    async def create_message(self, number: int) -> str:
+    async def create_message(self, number: int, force: bool = False) -> str:
         existing = await self.season_service.get_season(number)
         if existing:
             if existing.status == SeasonStatus.ARCHIVED:
                 return f"Season {number} is archived and read-only. Pick a new season number."
             return f"Season {number} is already active."
+        if not force and (blocker := await self.season_service.create_blocker()):
+            return blocker
 
-        if await self.season_service.create_season(number):
+        if await self.season_service.create_season(number, force=force):
             return (
                 f"Created Season {number} and set state to OFFSEASON. "
                 "Previous seasons stay available in `/seasons`. "
@@ -92,6 +99,8 @@ class SeasonAdminCog(commands.Cog):
             return error
 
         await self.season_service.advance_state(target, force=force)
+        if target != current:
+            await announce_stage(self.bot, target)
         msg = f"Season state: **{current} → {target}**" + (" (forced)" if error else "")
         if target == "PLAYIN":
             msg += (
@@ -108,11 +117,25 @@ class SeasonAdminCog(commands.Cog):
         await interaction.response.send_message(embed=await self.status_embed(), ephemeral=True)
 
     @season.command(name="create", description="Create a new season (archives the current one)")
-    @app_commands.describe(number="New season number (never reuse an archived one)")
+    @app_commands.describe(
+        number="New season number (never reuse an archived one)",
+        force="Archive the current season even if it was never closed",
+    )
     @require_host_app()
-    async def slash_create(self, interaction: discord.Interaction, number: app_commands.Range[int, 1]):
+    async def slash_create(
+        self,
+        interaction: discord.Interaction,
+        number: app_commands.Range[int, 1],
+        force: bool = False,
+    ):
         await interaction.response.defer(ephemeral=True)
-        await interaction.followup.send(await self.create_message(number), ephemeral=True)
+        await interaction.followup.send(await self.create_message(number, force), ephemeral=True)
+
+    @season.command(name="close", description="Close the season after the grand final")
+    @require_host_app()
+    async def slash_close(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(await self.close_message(), ephemeral=True)
 
     @season.command(name="advance", description="Move to the next season state")
     @app_commands.describe(
@@ -130,6 +153,26 @@ class SeasonAdminCog(commands.Cog):
         await interaction.response.send_message(
             await self.advance_message(state.value, force), ephemeral=True
         )
+
+    @season_group.command(name="close", help="Close the season after the grand final")
+    @require_host()
+    async def close_cmd(self, ctx: commands.Context):
+        await ctx.send(await self.close_message())
+
+    async def close_message(self) -> str:
+        season = await self.season_service.get_current_season_number()
+        if not season:
+            return "No active season."
+        result = await self.season_service.close_season(season)
+        if "error" in result:
+            return result["error"]
+        recap = f"🏆 **Season {season} is over!** Champion: **{result['champion']}**"
+        if result["runner_up"]:
+            recap += f" · Runner-up: **{result['runner_up']}**"
+        recap += ". Full recap: `/season_summary`."
+        await announce(self.bot, recap)
+        await refresh_presence(self.bot)
+        return recap + f"\nNext: `/season create {season + 1}`."
 
     @commands.command(name="playerlist", help="View all registered players")
     @require_host()
@@ -173,6 +216,7 @@ class SeasonAdminCog(commands.Cog):
         "match_channel": "Channel for match scheduling threads",
         "score_channel": "Channel for score confirmation messages",
         "agreements_channel": "Channel where agreed match times are announced",
+        "announcements_channel": "Channel for public stage and season announcements",
         "admin_id": "Discord ID of the head admin (contact for errors)",
         "admin_roles": "Comma-separated role IDs allowed to use admin/host commands",
         "signup_role": "Role given to signed-up players (never removed by giveroles)",
