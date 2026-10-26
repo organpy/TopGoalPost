@@ -474,7 +474,7 @@ target any member without a shared match.
 | `!reimport` | Hot-reload the standings renderer |
 | `!resetimages` | Clear the standings image cache |
 | `!sync_commands` | Force-resync slash commands |
-| `!getpfps` | Download all server avatars into `assets/pfps/` |
+| `!getpfps` | Download registered players' avatars into `assets/pfps/` (others are never stored) |
 | `!giveroles` | Assign current-stage role to eligible players |
 | `!signupbutton` | Post persistent signup button (SIGNUP state only) |
 | `!sync_hp` | Rebuild open HP/stats |

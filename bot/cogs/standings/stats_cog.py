@@ -24,6 +24,10 @@ from bot.ui.autocomplete import season_autocomplete, username_autocomplete
 CHAMPION_COLOR = discord.Color.from_rgb(245, 196, 70)
 
 
+
+# Rendering images is expensive; one card/summary per user per window.
+IMAGE_COOLDOWN_SECONDS = 20.0
+
 class HistoryView(View):
     def __init__(self, pages: list[str], author_id: int):
         super().__init__(timeout=60)
@@ -206,6 +210,7 @@ class StatsCog(commands.Cog):
         await interaction.followup.send(embed=self._profile_embed(stats), ephemeral=True)
 
     @app_commands.command(name="playercard", description="Render a player card image")
+    @app_commands.checks.cooldown(1, IMAGE_COOLDOWN_SECONDS, key=lambda i: i.user.id)
     @app_commands.describe(
         username="Player's registered name or ID (leave blank for yourself)",
         season="Season number (defaults to the current one)",
@@ -246,6 +251,7 @@ class StatsCog(commands.Cog):
         season="Season number (defaults to the current one)",
     )
     @app_commands.autocomplete(season=season_autocomplete)
+    @app_commands.checks.cooldown(1, IMAGE_COOLDOWN_SECONDS, key=lambda i: i.user.id)
     async def season_summary_cmd(
         self,
         interaction: discord.Interaction,

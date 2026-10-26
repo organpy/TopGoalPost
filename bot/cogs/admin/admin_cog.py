@@ -1,6 +1,7 @@
 """Admin utility cog: hot-reload, avatars, roles, threads."""
 
 import importlib
+import logging
 import os
 
 from datetime import timezone
@@ -13,13 +14,15 @@ from discord.ext import commands
 from bot.utils.errors import error_message, log_error
 from bot.cogs.checks import require_host, require_host_app
 
-from bot.db import get_db_manager, ImageCacheRepository
+from bot.db import get_db_manager, ImageCacheRepository, PlayerRepository
 from bot.services import audit
 from bot.services.health import Check, HealthService
+from bot.services.tournament_flow import TournamentFlowService
 from bot.services.season import SeasonService
 from bot.config import Config
 from bot.rendering import StandingsMaker, ASSETS_ROOT
 
+logger = logging.getLogger(__name__)
 
 STAGE_EVENT_TYPES = {
     "OPEN": "open_role",
@@ -27,6 +30,18 @@ STAGE_EVENT_TYPES = {
     "SWISS": "swiss_role",
     "PLAYOFF": "playoff_role",
 }
+
+
+async def _save_avatar(user: discord.abc.User) -> bool:
+    """Store a registered player's avatar as assets/pfps/<id>.png."""
+    pfp_dir = ASSETS_ROOT / "pfps"
+    pfp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        await user.display_avatar.save(fp=str(pfp_dir / f"{user.id}.png"))
+        return True
+    except (discord.HTTPException, OSError):
+        logger.warning("Could not save avatar for %s", user.id, exc_info=True)
+        return False
 
 
 class AdminCog(commands.Cog):
@@ -79,24 +94,22 @@ class AdminCog(commands.Cog):
             error_id = log_error("Command sync", e)
             await ctx.send(f"Sync failed. {error_message(error_id)}")
 
-    @commands.command(name="getpfps", help="Download all guild member avatars to pfps/")
+    @commands.command(name="getpfps", help="Download registered players' avatars to pfps/")
     @require_host()
     async def getpfps_cmd(self, ctx: commands.Context):
         if not ctx.guild:
             await ctx.send("Guild only.")
             return
-        
+
         message = await ctx.send("Downloading avatars...")
         count = 0
-        pfp_dir = ASSETS_ROOT / "pfps"
-        pfp_dir.mkdir(parents=True, exist_ok=True)
-        async for member in ctx.guild.fetch_members():
-            try:
-                await member.display_avatar.save(fp=str(pfp_dir / f"{member.id}.png"))
+        for discord_id in await TournamentFlowService().registered_discord_ids():
+            member = ctx.guild.get_member(discord_id)
+            if member is None:
+                continue  # left the server; keep any avatar we already have
+            if await _save_avatar(member):
                 count += 1
-            except Exception:
-                continue
-        await message.edit(content=f"Downloaded {count} avatars to {pfp_dir}.")
+        await message.edit(content=f"Downloaded {count} registered players' avatars.")
 
     @commands.command(name="giveroles", help="Assign current stage role to eligible players")
     @require_host()
@@ -326,12 +339,13 @@ class AdminCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_user_update(self, before: discord.User, after: discord.User):
-        try:
-            pfp_dir = ASSETS_ROOT / "pfps"
-            pfp_dir.mkdir(parents=True, exist_ok=True)
-            await after.display_avatar.save(fp=str(pfp_dir / f"{after.id}.png"))
-        except Exception:
-            pass
+        """Refresh avatars of registered players only; others are never stored."""
+        if before.display_avatar == after.display_avatar:
+            return
+        async with self.db.get_session() as session:
+            if not await PlayerRepository(session).get_by_discord_id(after.id):
+                return
+        await _save_avatar(after)
 
 
 async def setup(bot):
