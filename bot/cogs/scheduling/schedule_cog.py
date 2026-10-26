@@ -16,6 +16,7 @@ from bot.cogs.checks import _is_host
 from bot.config import Config
 from bot.db import get_db_manager, PlayerRepository
 from bot.rendering import ASSETS_ROOT
+from bot.services.match import MatchService
 from bot.services.scheduler import SchedulerService, WEEKDAYS
 from bot.services.season import SeasonService
 from bot.ui.scheduling import MatchConfirmView, TimestampView, WeeklyTimeslotModal
@@ -398,14 +399,55 @@ class ScheduleCog(commands.Cog):
 
         await interaction.response.send_message("Timeslot removed.", ephemeral=True)
 
+    async def offer_match_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """The caller's active matches, narrowed to the chosen opponent if any."""
+        matches = await self._caller_matches(interaction.user.id)
+        target = getattr(interaction.namespace, "target", None)
+        target_name = getattr(target, "display_name", None) or getattr(target, "name", None)
+        choices = []
+        for m in matches:
+            if target_name and target_name.lower() not in m["label"].lower():
+                continue
+            if current.lower() in m["label"].lower():
+                choices.append(app_commands.Choice(name=m["label"][:100], value=str(m["match_id"])))
+        return choices[:25]
+
+    async def _caller_matches(self, discord_id: int) -> list[dict]:
+        season = await self.season_service.get_current_season_number()
+        if not season:
+            return []
+        async with self.db.get_session() as session:
+            player = await PlayerRepository(session).get_by_discord_id(discord_id)
+        if not player:
+            return []
+        return await MatchService().active_matches_for_player(player.id, season)
+
+    async def _overlap_hint(self, a: int, b: int) -> str:
+        """Up to three shared one-off availability windows, as a reply hint."""
+        now = int(datetime.now().timestamp())
+        overlaps = [
+            (start, finish)
+            for start, finish in await self.scheduler.get_overlapping_slots(a, b)
+            if finish > now
+        ][:3]
+        if not overlaps:
+            return ""
+        windows = ", ".join(f"<t:{s}:f>–<t:{f}:t>" for s, f in overlaps)
+        return f"\nShared availability: {windows}"
+
     @app_commands.command(name="offer_time", description="Offer a match time to another player")
     @app_commands.describe(
         target="Your opponent (admins may target anyone)",
         day="Day of month",
         time="24h format: 19:45, 19 45 or 1945",
         text="Optional message for the target (admins only)",
+        match="Which match this time is for (defaults to your match with the target)",
     )
-    @app_commands.autocomplete(day=day_autocomplete, time=time_autocomplete)
+    @app_commands.autocomplete(
+        day=day_autocomplete, time=time_autocomplete, match=offer_match_autocomplete
+    )
     async def offer_time(
         self,
         interaction: discord.Interaction,
@@ -413,6 +455,7 @@ class ScheduleCog(commands.Cog):
         day: int,
         time: str,
         text: Optional[str] = None,
+        match: Optional[str] = None,
     ):
         # This command does DB lookups plus a DM send before it can answer, so
         # acknowledge immediately and answer through the followup webhook.
@@ -468,6 +511,31 @@ class ScheduleCog(commands.Cog):
             player = await repo.get_by_discord_id(interaction.user.id)
             opponent = await repo.get_by_discord_id(target.id)
 
+        match_id = None
+        if match:
+            if not match.isdigit():
+                await self._reply(interaction, "Pick a match from the list.", deferred=True)
+                return
+            match_id = int(match)
+            participants = await self.scheduler.match_participants(match_id)
+            if sorted(participants) != sorted({interaction.user.id, target.id}) and not (
+                is_host and target.id in participants
+            ):
+                await self._reply(
+                    interaction,
+                    f"Match {match_id} is not between you and <@{target.id}>.",
+                    deferred=True,
+                )
+                return
+        elif player and opponent:
+            season = await self.season_service.get_current_season_number()
+            shared = None
+            if season:
+                shared = await self.scheduler.find_shared_match(
+                    player.id, opponent.id, season
+                )
+            match_id = shared.id if shared else None
+
         if not is_host:
             if not player or not opponent:
                 await self._reply(
@@ -476,14 +544,7 @@ class ScheduleCog(commands.Cog):
                     deferred=True,
                 )
                 return
-
-            season = await self.season_service.get_current_season_number()
-            match = None
-            if season:
-                match = await self.scheduler.find_shared_match(
-                    player.id, opponent.id, season
-                )
-            if not match:
+            if match_id is None:
                 await self._reply(
                     interaction, "You don't have a game to schedule!", deferred=True
                 )
@@ -492,7 +553,8 @@ class ScheduleCog(commands.Cog):
         timestamp = int(prospective_start.timestamp())
         view = MatchConfirmView(target=target.id)
         content = (
-            f"<@{interaction.user.id}> wants to play your game at <t:{timestamp}:F>"
+            f"<@{interaction.user.id}> wants to play your game"
+            f"{f' (Match {match_id})' if match_id else ''} at <t:{timestamp}:F>"
         )
         if text:
             content += f"\n\n{text}"
@@ -506,8 +568,12 @@ class ScheduleCog(commands.Cog):
             )
             return
 
+        match_note = f" for Match {match_id}" if match_id else ""
         await self._reply(
-            interaction, f"Offered time: <t:{timestamp}:F>", deferred=True
+            interaction,
+            f"Offered time{match_note}: <t:{timestamp}:F>"
+            + await self._overlap_hint(interaction.user.id, target.id),
+            deferred=True,
         )
 
         await view.wait()
@@ -526,6 +592,10 @@ class ScheduleCog(commands.Cog):
             except discord.HTTPException:
                 pass
         elif view.value:
+            if match_id:
+                await self.scheduler.set_match_time(
+                    match_id, prospective_start, interaction.user.id
+                )
             try:
                 await msg.edit(
                     content=f"Confirmed: game at <t:{timestamp}:F> against <@{interaction.user.id}>.",
@@ -542,8 +612,8 @@ class ScheduleCog(commands.Cog):
             if channel is not None:
                 try:
                     await channel.send(
-                        f"<@{interaction.user.id}> and <@{target.id}> agreed to play "
-                        f"at <t:{timestamp}:F>"
+                        f"<@{interaction.user.id}> and <@{target.id}> agreed to play"
+                        f"{f' Match {match_id}' if match_id else ''} at <t:{timestamp}:F>"
                     )
                 except discord.HTTPException:
                     pass

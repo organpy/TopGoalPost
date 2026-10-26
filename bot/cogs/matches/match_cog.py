@@ -1,5 +1,6 @@
 """Match reporting cog."""
 
+from datetime import timezone
 from typing import Optional
 
 import discord
@@ -15,6 +16,14 @@ from bot.ui.autocomplete import username_autocomplete
 from bot.ui.report import ReportScoreView, score_confirm_view
 from bot.services.match_report import MatchReportService
 
+
+
+def _scheduled_suffix(scheduled_at) -> str:
+    """` · 🗓 <t:...>` for matches with an agreed time (stored as naive UTC)."""
+    if not scheduled_at:
+        return ""
+    ts = int(scheduled_at.replace(tzinfo=timezone.utc).timestamp())
+    return f" · 🗓 <t:{ts}:f>"
 
 
 class MatchCog(commands.Cog):
@@ -91,51 +100,11 @@ class MatchCog(commands.Cog):
         return choices
 
     async def _active_player_matches(self, player_id: int) -> list[dict]:
-        """Active matches for the reporter, with their side and display label."""
-        from sqlalchemy import select, and_
-        from sqlalchemy.orm import selectinload
-        from bot.db import Match as M, MatchPlayer as MP, Event
-
+        """Active current-season matches for the reporter, with side and label."""
         season = await SeasonService().get_current_season_number()
         if not season:
             return []
-        async with self.db.get_session() as session:
-            stmt = (
-                select(M)
-                .options(
-                    selectinload(M.match_players).selectinload(MP.player),
-                    selectinload(M.event),
-                )
-                .join(MP)
-                .join(Event, M.event_id == Event.id)
-                .where(
-                    and_(
-                        MP.player_id == player_id,
-                        M.completed_at.is_(None),
-                        Event.season == season,
-                    )
-                )
-                .order_by(M.id.desc())
-            )
-            matches = (await session.execute(stmt)).scalars().unique().all()
-            out = []
-            for match in matches:
-                mps = sorted(match.match_players, key=lambda mp: mp.side)
-                if len(mps) != 2 or any(mp.player_id is None for mp in mps):
-                    continue
-                side = next(
-                    (mp.side for mp in mps if mp.player_id == player_id), None
-                )
-                if side is None:
-                    continue
-                out.append(
-                    {
-                        "match_id": match.id,
-                        "side": side,
-                        "label": self.match_service._format_match_label(match, mps),
-                    }
-                )
-            return out
+        return await self.match_service.active_matches_for_player(player_id, season)
 
     async def playoff_match_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -261,7 +230,7 @@ class MatchCog(commands.Cog):
             )
             return
 
-        lines = [m["label"] for m in page_matches]
+        lines = [m["label"] + _scheduled_suffix(m.get("scheduled_at")) for m in page_matches]
         total_pages = (len(matches) + page_size - 1) // page_size
         body = "\n".join(lines)
         await interaction.followup.send(

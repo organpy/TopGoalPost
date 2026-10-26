@@ -4,6 +4,7 @@ Manages player timezones and timeslots for scheduling matches.
 Timeslots are stored as unix epoch timestamps.
 """
 
+from datetime import datetime, timezone
 from typing import List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -14,6 +15,7 @@ from bot.db import (
     Timezone,
     Timeslot,
     WeeklyTimeslot,
+    Match,
     EventRepository,
     MatchRepository,
 )
@@ -202,6 +204,27 @@ class SchedulerService:
                 if overlap_start < overlap_finish:
                     overlaps.append((overlap_start, overlap_finish))
         return overlaps
+
+    async def match_participants(self, match_id: int) -> list[int]:
+        """Discord IDs of the players in a match (empty if unknown)."""
+        async with self.db.get_session() as session:
+            match = await MatchRepository(session).get_by_id(match_id)
+            if not match:
+                return []
+            return [mp.player.discord_id for mp in match.match_players if mp.player]
+
+    async def set_match_time(
+        self, match_id: int, when: datetime, scheduled_by: int
+    ) -> bool:
+        """Store an agreed time (any tz-aware datetime) on the match as naive UTC."""
+        async with self.db.get_session() as session:
+            match = await session.get(Match, match_id)
+            if not match or match.completed_at:
+                return False
+            match.scheduled_at = when.astimezone(timezone.utc).replace(tzinfo=None)
+            match.scheduled_by = scheduled_by
+            await session.commit()
+            return True
 
     async def find_shared_match(
         self, player_id: int, opponent_id: int, season: int

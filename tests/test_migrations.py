@@ -21,12 +21,21 @@ def _tables(db_path: Path) -> set[str]:
         return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
+def _columns(db_path: Path, table: str) -> set[str]:
+    with sqlite3.connect(db_path) as conn:
+        return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def test_upgrade_and_downgrade_round_trip(tmp_path):
     db_path = tmp_path / "migrate.db"
     cfg = _alembic(db_path)
 
     command.upgrade(cfg, "head")
     assert "match_reports" in _tables(db_path)
+    assert {"scheduled_at", "scheduled_by"} <= _columns(db_path, "matches")
+
+    command.downgrade(cfg, "e7a1c3d9f210")
+    assert "scheduled_at" not in _columns(db_path, "matches")
 
     command.downgrade(cfg, "d1e4f7a92b30")
     assert "match_reports" not in _tables(db_path)

@@ -158,6 +158,9 @@ class Match(Base):
     bracket_slot: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     series_game: Mapped[int] = mapped_column(Integer, default=1)
     thread_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    # Agreed play time (naive UTC, like other timestamps) and who proposed it.
+    scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    scheduled_by: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

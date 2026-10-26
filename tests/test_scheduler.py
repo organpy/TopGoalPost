@@ -306,3 +306,110 @@ class TestAutocomplete:
             datetime.now(ZoneInfo("Pacific/Kiritimati")).day
         )
         assert caller_days[0].value == str(datetime.now(ZoneInfo("UTC")).day)
+
+
+class TestMatchScheduling:
+    """Agreed times are stored on the match, and only its players can offer."""
+
+    @staticmethod
+    async def _setup(db):
+        from bot.db import Player, Season, SeasonStatus, Event, EventType, EventStatus, Match, MatchPlayer
+        from bot.services.scheduler import SchedulerService
+
+        async with db.get_session() as session:
+            session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+            alice = Player(discord_id=111, name="Alice", country="US")
+            bob = Player(discord_id=222, name="Bob", country="US")
+            carol = Player(discord_id=333, name="Carol", country="US")
+            session.add_all([alice, bob, carol])
+            event = Event(name="Open", type=EventType.OPEN, season=1, status=EventStatus.ACTIVE)
+            session.add(event)
+            await session.flush()
+            match = Match(event_id=event.id)
+            session.add(match)
+            await session.flush()
+            session.add(MatchPlayer(match_id=match.id, side=0, player_id=alice.id))
+            session.add(MatchPlayer(match_id=match.id, side=1, player_id=bob.id))
+            await session.commit()
+            match_id = match.id
+        await SchedulerService().set_timezone(111, "UTC")
+        return match_id
+
+    @staticmethod
+    def _call(user_id: int, target_id: int, answer):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        interaction = MagicMock()
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+        interaction.user.id = user_id
+        interaction.user.send = AsyncMock()
+        interaction.channel.send = AsyncMock()
+        target = MagicMock(bot=False, id=target_id)
+        target.send = AsyncMock(return_value=MagicMock(edit=AsyncMock()))
+        bot = MagicMock()
+        bot.get_channel = MagicMock(return_value=MagicMock(send=AsyncMock()))
+        patches = (
+            patch("bot.cogs.scheduling.schedule_cog._is_host", AsyncMock(return_value=False)),
+            patch("bot.cogs.scheduling.schedule_cog.MatchConfirmView"),
+        )
+        return interaction, target, bot, patches, answer
+
+    async def _offer(self, user_id, target_id, answer, match=None):
+        from bot.cogs.scheduling.schedule_cog import ScheduleCog
+
+        interaction, target, bot, (host_patch, view_patch), answer = self._call(user_id, target_id, answer)
+        with host_patch, view_patch as view_cls:
+            from unittest.mock import AsyncMock
+
+            view_cls.return_value.wait = AsyncMock()
+            view_cls.return_value.value = answer
+            cog = ScheduleCog(bot)
+            await cog.offer_time.callback(cog, interaction, target, 28, "19:00", None, match)
+        return interaction
+
+    @staticmethod
+    async def _scheduled(db, match_id):
+        from bot.db import Match
+
+        async with db.get_session() as session:
+            return (await session.get(Match, match_id)).scheduled_at
+
+    async def test_accept_persists_time(self, db):
+        match_id = await self._setup(db)
+        await self._offer(111, 222, True, str(match_id))
+        scheduled = await self._scheduled(db, match_id)
+        assert scheduled is not None
+        assert (scheduled.day, scheduled.hour, scheduled.minute) == (28, 19, 0)
+
+    async def test_accept_without_match_option_uses_shared_match(self, db):
+        match_id = await self._setup(db)
+        await self._offer(111, 222, True)
+        assert await self._scheduled(db, match_id) is not None
+
+    async def test_reject_and_timeout_leave_time_unset(self, db):
+        match_id = await self._setup(db)
+        await self._offer(111, 222, False, str(match_id))
+        await self._offer(111, 222, None, str(match_id))
+        assert await self._scheduled(db, match_id) is None
+
+    async def test_wrong_participant_cannot_offer(self, db):
+        match_id = await self._setup(db)
+        interaction = await self._offer(111, 333, True, str(match_id))
+        assert "is not between you" in interaction.followup.send.call_args[0][0]
+        assert await self._scheduled(db, match_id) is None
+
+    async def test_overlap_hint_lists_shared_slots(self, db):
+        from datetime import datetime
+        from unittest.mock import MagicMock
+
+        from bot.cogs.scheduling.schedule_cog import ScheduleCog
+        from bot.services.scheduler import SchedulerService
+
+        svc = SchedulerService()
+        start = int(datetime.now().timestamp()) + 3600
+        await svc.add_timeslot(111, start, start + 7200)
+        await svc.add_timeslot(222, start + 3600, start + 10800)
+
+        hint = await ScheduleCog(MagicMock())._overlap_hint(111, 222)
+        assert f"<t:{start + 3600}:f>" in hint

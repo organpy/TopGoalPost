@@ -1137,6 +1137,51 @@ class MatchService:
             "win_distribution": win_dist,
         }
 
+    async def active_matches_for_player(self, player_id: int, season: int) -> list[dict]:
+        """Unplayed matches of ``season`` where both players are known.
+
+        Each item has ``match_id``, the player's ``side``, a display ``label``,
+        and ``scheduled_at``.
+        """
+        async with self.db.get_session() as session:
+            stmt = (
+                select(Match)
+                .options(
+                    selectinload(Match.match_players).selectinload(MatchPlayer.player),
+                    selectinload(Match.event),
+                )
+                .join(MatchPlayer)
+                .join(Event, Match.event_id == Event.id)
+                .where(
+                    and_(
+                        MatchPlayer.player_id == player_id,
+                        Match.completed_at.is_(None),
+                        Event.season == season,
+                    )
+                )
+                .order_by(Match.id.desc())
+            )
+            matches = (await session.execute(stmt)).scalars().unique().all()
+            out = []
+            for match in matches:
+                mps = sorted(match.match_players, key=lambda mp: mp.side)
+                if len(mps) != 2 or any(mp.player_id is None for mp in mps):
+                    continue
+                side = next(
+                    (mp.side for mp in mps if mp.player_id == player_id), None
+                )
+                if side is None:
+                    continue
+                out.append(
+                    {
+                        "match_id": match.id,
+                        "side": side,
+                        "label": self._format_match_label(match, mps),
+                        "scheduled_at": match.scheduled_at,
+                    }
+                )
+            return out
+
     async def list_incomplete_matches(
         self,
         season: Optional[int] = None,
@@ -1225,7 +1270,13 @@ class MatchService:
                         continue
                 elif player_key and player_key.lower() not in label.lower():
                     continue
-                out.append({"match_id": match.id, "label": label})
+                out.append(
+                    {
+                        "match_id": match.id,
+                        "label": label,
+                        "scheduled_at": match.scheduled_at,
+                    }
+                )
 
             # Active matches stay first; completed matches follow newest-first.
             active_ids = {m.id for m in matches if m.completed_at is None}
