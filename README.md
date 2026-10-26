@@ -336,7 +336,6 @@ the reset card if one is played.
 | `/season status` | Current season number, state and next state |
 | `/season create N [force]` | Create Season N (archives the current season, history kept). Refuses an unclosed season unless `force` |
 | `/season advance STATE [force]` | Move to the next state; `force` skips/rewinds (logged) |
-| `/audit [limit] [action]` | Recent score edits, forfeits, stage changes, season and config changes, with who did them |
 | `/season close` | After the grand final: record the champion, post the recap, go to OFFSEASON |
 
 `!season status|create|advance` remain as prefix equivalents.
@@ -471,6 +470,7 @@ target any member without a shared match.
 | `!playerlist` | List all registered players |
 | `!backup` | Consistent SQLite backup (backup API, safe while running) to `data/backups/`; keeps the newest 10 |
 | `/doctor` | Check DB, migrations, config keys, channels, roles, bot permissions and asset folders |
+| `/audit [limit] [action]` | Recent score edits, forfeits, stage changes, season and config changes, with who did them |
 | `!reimport` | Hot-reload the standings renderer |
 | `!resetimages` | Clear the standings image cache |
 | `!sync_commands` | Force-resync slash commands |
@@ -588,6 +588,9 @@ Flags are not committed: `get_flag()` fetches a missing flag from the twemoji
 CDN on first use and falls back to a transparent box if the fetch fails.
 
 ---
+
+Contributors and coding agents: see [`AGENTS.md`](AGENTS.md) for the
+architecture, rules and how-tos.
 
 <p id="testing"><img src="repopng/TPGtesting.png" alt="Testing & dummy data" width="275"></p>
 
