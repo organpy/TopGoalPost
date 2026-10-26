@@ -217,44 +217,41 @@ class AdminCog(commands.Cog):
         ids = [f"<@{p.id}>" for p in players[:amount]]
         await ctx.send("\n".join(ids) if ids else "No players found.")
 
-    @commands.command(name="unthreadedgames", hidden=True, help="List unplayed matches without a thread")
+    @commands.command(
+        name="unthreadedgames",
+        hidden=True,
+        help="List players with unplayed matches who are in no scheduling thread",
+    )
     @require_host()
     async def unthreadedgames_cmd(self, ctx: commands.Context):
-        from bot.db import EventRepository, MatchRepository, PlayerRepository
-        from bot.cogs.tournament.tournament_cog import STAGE_EVENT_TYPES
+        from bot.services.tournament_flow import TournamentFlowService
+        from bot.utils.threads import get_match_thread_channel, players_without_thread, stage_threads
 
         season_num = await self.season_service.get_current_season_number()
         state = await self.season_service.get_state()
-        etype = STAGE_EVENT_TYPES.get(state)
-        if not season_num or not etype:
-            await ctx.send(f"No matches for state {state}.")
+        discord_ids = (
+            await TournamentFlowService().unplayed_discord_ids(season_num, state)
+            if season_num else None
+        )
+        if not discord_ids:
+            await ctx.send(f"No unplayed {state} matches.")
+            return
+        channel = await get_match_thread_channel(ctx.guild) if ctx.guild else None
+        if not channel:
+            await ctx.send("No match channel configured.")
+            return
+        if not stage_threads(channel, state):
+            await ctx.send(f"{state} has no scheduling threads yet. Run `!tourney makethreads`.")
             return
 
-        async with self.db.get_session() as session:
-            event = await EventRepository(session).get_by_type_and_season(etype, season_num)
-            if not event:
-                await ctx.send(f"No {state} event.")
-                return
-            matches = await MatchRepository(session).get_unplayed_by_event(event.id)
-            player_repo = PlayerRepository(session)
-
-            lines = []
-            for m in matches:
-                if m.thread_id:
-                    continue
-                mps = sorted(m.match_players, key=lambda mp: mp.side)
-                if len(mps) < 2:
-                    continue
-                names = []
-                for mp in mps[:2]:
-                    p = await player_repo.get_by_id(mp.player_id) if mp.player_id else None
-                    names.append(f"<@{p.discord_id}>" if p else "TBA")
-                lines.append(f"Match #{m.id}: {names[0]} vs {names[1]}")
-
-        if not lines:
-            await ctx.send("All unplayed matches have threads.")
+        missing = await players_without_thread(channel, state, discord_ids)
+        if not missing:
+            await ctx.send(f"Every player with an unplayed {state} match is in a scheduling thread.")
             return
-        await ctx.send("Unthreaded matches:\n" + "\n".join(lines))
+        await ctx.send(
+            f"Players with unplayed {state} matches but no scheduling thread:\n"
+            + " ".join(f"<@{d}>" for d in missing)
+        )
 
     @commands.Cog.listener()
     async def on_user_update(self, before: discord.User, after: discord.User):

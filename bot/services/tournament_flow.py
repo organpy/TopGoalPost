@@ -10,6 +10,7 @@ from bot.db import (
     EventType,
     Match,
     MatchPlayer,
+    Player,
     PlayerSeason,
     EventRepository,
     MatchRepository,
@@ -320,6 +321,30 @@ class TournamentFlowService:
                 + (" State → PLAYOFF." if advanced_from else "")
             ),
         }
+
+    async def unplayed_discord_ids(self, season: int, stage: str) -> Optional[list[int]]:
+        """Discord IDs with unplayed matches in ``stage``, in match order.
+
+        None when the stage has no event (nothing generated yet).
+        """
+        etype = STAGE_EVENTS.get(stage)
+        if not etype:
+            return None
+        async with self.db.get_session() as session:
+            event = await EventRepository(session).get_by_type_and_season(etype, season)
+            if not event:
+                return None
+            matches = await MatchRepository(session).get_unplayed_by_event(event.id)
+        seen: dict[int, None] = {}
+        for match in matches:
+            for mp in match.match_players:
+                if mp.player:
+                    seen.setdefault(mp.player.discord_id, None)
+        return list(seen)
+
+    async def registered_discord_ids(self) -> set[int]:
+        async with self.db.get_session() as session:
+            return set((await session.execute(select(Player.discord_id))).scalars().all())
 
     async def _event_exists(self, season: int, event_type: EventType) -> bool:
         async with self.db.get_session() as session:

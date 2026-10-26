@@ -14,27 +14,13 @@ from bot.services.playin import PlayinService
 from bot.services.match import MatchService
 from bot.services.signup import SignupService
 from bot.services.tournament_flow import TournamentFlowService, STAGE_EVENTS
-from bot.db import get_db_manager, MatchRepository, PlayerRepository, EventType, EventRepository
+from bot.db import get_db_manager, MatchRepository, EventType, EventRepository
 from bot.ui.autocomplete import player_list_autocomplete
+from bot.utils.threads import cleanse_scheduling_threads, create_scheduling_threads
 
 logger = logging.getLogger(__name__)
 
 STAGE_EVENT_TYPES = STAGE_EVENTS
-
-
-def _split_groups(player_ids: list[int]) -> list[list[int]]:
-    """Split player IDs into scheduling groups of ~3 with overlap for connectivity."""
-    n = len(player_ids)
-    if n <= 6:
-        return [player_ids]
-    num_groups = n // 3
-    k, m = divmod(n, num_groups)
-    lengths = [k + (1 if i < m else 0) for i in range(num_groups)]
-    result = [player_ids[-3:] + player_ids[:lengths[0]]]
-    for i, l in enumerate(lengths[1:], 1):
-        s = sum(lengths[:i])
-        result.append(player_ids[s - 3:s + l])
-    return result
 
 
 class TournamentCog(commands.Cog):
@@ -93,50 +79,15 @@ class TournamentCog(commands.Cog):
             return
 
         message = await ctx.send("Creating scheduling threads...")
-
-        async with self.db.get_session() as session:
-            event_repo = EventRepository(session)
-            event = await event_repo.get_by_type_and_season(etype, season_num)
-            if not event:
-                await message.edit(content=f"No {state} event found.")
-                return
-            match_repo = MatchRepository(session)
-            matches = await match_repo.get_unplayed_by_event(event.id)
-
-        seen = set()
-        all_pids = []
-        for match in matches:
-            for mp in match.match_players:
-                pid = mp.player_id
-                if pid and pid not in seen:
-                    seen.add(pid)
-                    all_pids.append(pid)
-
-        if not all_pids:
+        discord_ids = await self.flow_service.unplayed_discord_ids(season_num, state)
+        if discord_ids is None:
+            await message.edit(content=f"No {state} event found.")
+            return
+        if not discord_ids:
             await message.edit(content="No players with unplayed matches.")
             return
 
-        groups = _split_groups(all_pids)
-        created = 0
-        async with self.db.get_session() as session:
-            player_repo = PlayerRepository(session)
-            for i, gids in enumerate(groups):
-                try:
-                    thread = await channel.create_thread(
-                        name=f"{state} scheduling #{i + 1}",
-                        reason=f"{state} scheduling group {i + 1}"
-                    )
-                    for pid in gids:
-                        p = await player_repo.get_by_id(pid)
-                        if p:
-                            try:
-                                await thread.add_user(discord.Object(p.discord_id))
-                            except Exception:
-                                pass
-                    created += 1
-                except Exception:
-                    continue
-
+        created = await create_scheduling_threads(channel, state, discord_ids)
         await message.edit(content=f"Created {created} scheduling threads for {state}.")
 
     @tourney_group.command(name="cleansethreads", help="Remove non-participants from scheduling threads")
@@ -163,42 +114,17 @@ class TournamentCog(commands.Cog):
             return
 
         message = await ctx.send("Cleaning up threads...")
+        active = await self.flow_service.unplayed_discord_ids(season_num, state)
+        if active is None:
+            await message.edit(content=f"No {state} event.")
+            return
 
-        async with self.db.get_session() as session:
-            event = await EventRepository(session).get_by_type_and_season(etype, season_num)
-            if not event:
-                await message.edit(content=f"No {state} event.")
-                return
-            unplayed = await MatchRepository(session).get_unplayed_by_event(event.id)
-
-        active_player_ids = set()
-        for m in unplayed:
-            for mp in m.match_players:
-                if mp.player_id:
-                    active_player_ids.add(mp.player_id)
-
-        threads = channel.threads
-        cleaned = 0
-        async with self.db.get_session() as session:
-            player_repo = PlayerRepository(session)
-            for thread in threads:
-                try:
-                    members = await thread.fetch_members()
-                except Exception:
-                    continue
-                for member in members:
-                    if member.id == self.bot.user.id:
-                        continue
-                    p = await player_repo.get_by_discord_id(member.id)
-                    if not p:
-                        continue
-                    if p.id not in active_player_ids:
-                        try:
-                            await thread.remove_user(discord.Object(member.id))
-                            cleaned += 1
-                        except Exception:
-                            pass
-
+        cleaned = await cleanse_scheduling_threads(
+            channel,
+            set(active),
+            await self.flow_service.registered_discord_ids(),
+            self.bot.user.id,
+        )
         await message.edit(content=f"Cleaned {cleaned} users from threads.")
 
     async def _cleanup_stage_roles(self, guild: discord.Guild, previous_state: str, new_state: str):

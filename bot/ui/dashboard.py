@@ -11,7 +11,8 @@ from bot.db import get_db_manager, PlayerSeason
 from bot.services.season import SeasonService
 from bot.services.pairing import PairingService
 from bot.services.playin import PlayinService
-from bot.services.tournament_flow import TournamentFlowService
+from bot.services.tournament_flow import TournamentFlowService, STAGE_EVENTS
+from bot.utils.threads import cleanse_scheduling_threads, create_scheduling_threads
 from bot.config import Config
 from bot.utils.errors import ReportingView
 
@@ -184,133 +185,48 @@ class DashboardView(ReportingView):
         except ValueError as e:
             await interaction.followup.send(str(e), ephemeral=True)
 
+    async def _thread_context(self, interaction: discord.Interaction):
+        """(channel, season, state) for thread buttons, or None after replying."""
+        channel_id = await Config().get_channel_id("match_channel")
+        channel = interaction.guild.get_channel(channel_id) if channel_id and interaction.guild else None
+        if not channel:
+            await interaction.followup.send("Set match_channel first.", ephemeral=True)
+            return None
+        season_num = await self.season_service.get_current_season_number()
+        state = await self.season_service.get_state()
+        if not season_num or state not in STAGE_EVENTS:
+            await interaction.followup.send(f"No scheduling threads for state {state}.", ephemeral=True)
+            return None
+        return channel, season_num, state
+
     @discord.ui.button(label="Threads", style=discord.ButtonStyle.secondary, emoji="🧵", row=2)
     async def make_threads(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
-        from bot.db import EventRepository, MatchRepository, PlayerRepository, EventType
-        channel_id = await Config().get_channel_id("match_channel")
-        if not channel_id or not interaction.guild:
-            await interaction.followup.send("Set match_channel first.", ephemeral=True)
+        ctx = await self._thread_context(interaction)
+        if not ctx:
             return
-        channel = interaction.guild.get_channel(channel_id)
-        if not channel:
-            await interaction.followup.send("Channel not found.", ephemeral=True)
+        channel, season_num, state = ctx
+        discord_ids = await self.flow_service.unplayed_discord_ids(season_num, state)
+        if not discord_ids:
+            await interaction.followup.send(f"No players with unplayed {state} matches.", ephemeral=True)
             return
-        season_num = await self.season_service.get_current_season_number()
-        state = await self.season_service.get_state()
-        stage_map = {"OPEN": EventType.OPEN, "PLAYIN": EventType.PLAYIN, "SWISS": EventType.SWISS, "PLAYOFF": EventType.PLAYOFF}
-        etype = stage_map.get(state)
-        if not etype:
-            await interaction.followup.send(f"No threads to create for state {state}.", ephemeral=True)
-            return
-        db = get_db_manager()
-        async with db.get_session() as session:
-            event = await EventRepository(session).get_by_type_and_season(etype, season_num)
-            if not event:
-                await interaction.followup.send(f"No {state} event.", ephemeral=True)
-                return
-            matches = await MatchRepository(session).get_unplayed_by_event(event.id)
-
-        def _split_groups(player_ids):
-            n = len(player_ids)
-            if n <= 6:
-                return [player_ids]
-            groups = n // 3
-            k, m = divmod(n, groups)
-            lengths = [k + (1 if i < m else 0) for i in range(groups)]
-            result = [player_ids[-3:] + player_ids[:lengths[0]]]
-            for i, l in enumerate(lengths[1:], 1):
-                s = sum(lengths[:i])
-                result.append(player_ids[s - 3:s + l])
-            return result
-
-        seen = set()
-        all_pids = []
-        for m in matches:
-            for mp in m.match_players:
-                pid = mp.player_id
-                if pid and pid not in seen:
-                    seen.add(pid)
-                    all_pids.append(pid)
-        if not all_pids:
-            await interaction.followup.send("No players with unplayed matches.", ephemeral=True)
-            return
-        groups = _split_groups(all_pids)
-        created = 0
-        async with db.get_session() as session:
-            pr = PlayerRepository(session)
-            for i, gids in enumerate(groups):
-                try:
-                    thread = await channel.create_thread(
-                        name=f"{state} scheduling #{i + 1}",
-                        reason=f"{state} scheduling group {i + 1}"
-                    )
-                    for pid in gids:
-                        p = await pr.get_by_id(pid)
-                        if p:
-                            try:
-                                await thread.add_user(discord.Object(p.discord_id))
-                            except Exception:
-                                pass
-                    created += 1
-                except Exception:
-                    continue
+        created = await create_scheduling_threads(channel, state, discord_ids)
         await interaction.followup.send(f"Created {created} scheduling threads for {state}.", ephemeral=True)
 
     @discord.ui.button(label="Clean Threads", style=discord.ButtonStyle.danger, emoji="🧹", row=2)
     async def clean_threads(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
-        channel_id = await Config().get_channel_id("match_channel")
-        if not channel_id or not interaction.guild:
-            await interaction.followup.send("Set match_channel first.", ephemeral=True)
+        ctx = await self._thread_context(interaction)
+        if not ctx:
             return
-        channel = interaction.guild.get_channel(channel_id)
-        if not channel:
-            await interaction.followup.send("Channel not found.", ephemeral=True)
+        channel, season_num, state = ctx
+        active = await self.flow_service.unplayed_discord_ids(season_num, state)
+        if active is None:
+            await interaction.followup.send(f"No {state} event.", ephemeral=True)
             return
-        season_num = await self.season_service.get_current_season_number()
-        state = await self.season_service.get_state()
-        from bot.db import EventType
-        stage_map = {"OPEN": EventType.OPEN, "PLAYIN": EventType.PLAYIN, "SWISS": EventType.SWISS, "PLAYOFF": EventType.PLAYOFF}
-        etype = stage_map.get(state)
-        if not etype:
-            await interaction.followup.send(f"No threads to clean for {state}.", ephemeral=True)
-            return
-        db = get_db_manager()
-        async with db.get_session() as session:
-            from bot.db import EventRepository, MatchRepository
-            event = await EventRepository(session).get_by_type_and_season(etype, season_num)
-            if not event:
-                await interaction.followup.send(f"No {state} event.", ephemeral=True)
-                return
-            unplayed = await MatchRepository(session).get_unplayed_by_event(event.id)
-
-        active_player_ids = set()
-        for m in unplayed:
-            for mp in m.match_players:
-                if mp.player_id:
-                    active_player_ids.add(mp.player_id)
-
-        async with db.get_session() as session:
-            pr = PlayerRepository(session)
-            cleaned = 0
-            for thread in channel.threads:
-                try:
-                    members = await thread.fetch_members()
-                except Exception:
-                    continue
-                for member in members:
-                    if member.id == self.bot.user.id:
-                        continue
-                    p = await pr.get_by_discord_id(member.id)
-                    if not p:
-                        continue
-                    if p.id not in active_player_ids:
-                        try:
-                            await thread.remove_user(discord.Object(member.id))
-                            cleaned += 1
-                        except Exception:
-                            pass
+        cleaned = await cleanse_scheduling_threads(
+            channel, set(active), await self.flow_service.registered_discord_ids(), self.bot.user.id
+        )
         await interaction.followup.send(f"Cleaned {cleaned} users.", ephemeral=True)
 
     # Row 3: Config

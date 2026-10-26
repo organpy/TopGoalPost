@@ -23,7 +23,7 @@ rendered standings images and Discord-thread scheduling.
 |------|--------------|
 | **Tournament engine** | Signups, Open, Play-ins, Swiss and a 29-slot double-elimination playoff bracket with a grand-final reset. |
 | **Rendered views** | Standings boards, playoff brackets, player cards and season summaries. |
-| **Match scheduling** | Timezone-aware availability, match-time proposals and dedicated Discord threads. |
+| **Match scheduling** | Timezone-aware availability, match-time proposals stored on the match, and group scheduling threads. |
 | **Score flow** | Reporting, opponent confirmation, corrections and admin overrides. |
 | **Season history** | Archived seasons, player stats, career awards and season recaps. |
 | **Host tools** | Dashboard controls, role-gated admin commands, backups and dummy-data utilities. |
@@ -207,7 +207,7 @@ Admin utilities:
 ```
 !sync_hp                   # same as sync_open
 !getleaderboard 20         # mention top N players
-!unthreadedgames           # list matches with no scheduling thread
+!unthreadedgames           # players with unplayed matches in no scheduling thread
 ```
 
 </details>
@@ -365,7 +365,7 @@ The same progression engine is also exposed as prefix subcommands:
 
 | Command | Description |
 |---------|-------------|
-| `!tourney makethreads [stage]` | Create scheduling threads for a stage |
+| `!tourney makethreads [stage]` | Create group scheduling threads (`<STAGE> scheduling #N`, ~3 players each) |
 | `!tourney cleansethreads` | Remove non-participants from threads |
 | `!tourney generate_open` | Create 4 open matches per player |
 | `!tourney skip_open A, B` | Set Open-skip / returning seeds |
@@ -476,7 +476,7 @@ target any member without a shared match.
 | `!signupbutton` | Post persistent signup button (SIGNUP state only) |
 | `!sync_hp` | Rebuild open HP/stats |
 | `!getleaderboard N` | Mention the top N open players |
-| `!unthreadedgames` | List matches without scheduling threads |
+| `!unthreadedgames` | List players with unplayed matches who are in no scheduling thread |
 | `!dummy_add N` | Add N dummy players to current season (dev mode only) |
 | `!dummy_score` | Randomly score all unplayed matches (dev) |
 | `!dummy_replace OLD NEW` | Change a player's Discord ID (dev) |
