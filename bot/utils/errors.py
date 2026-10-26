@@ -6,6 +6,8 @@ import uuid
 import discord
 from discord.ext import commands
 
+from bot.services.audit import current_actor
+
 logger = logging.getLogger("TopGoalPost.errors")
 
 PERMISSION_MESSAGE = "⛔ You need an administrator or host role to use this command."
@@ -71,7 +73,14 @@ def describe_app_command_error(error: discord.app_commands.AppCommandError) -> s
 
 
 class ReportingView(discord.ui.View):
-    """View base class that answers failed button/select callbacks."""
+    """View base class that answers failed button/select callbacks.
+
+    Also records the clicking user as the audit actor for the callback.
+    """
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        current_actor.set(interaction.user.id)
+        return True
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
         await report_interaction_error(interaction, error, f"{type(self).__name__} item {item}")

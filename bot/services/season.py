@@ -20,6 +20,7 @@ from bot.db import (
     ImageCacheRepository,
 )
 from bot.config import Config
+from bot.services import audit
 from bot.services.season_results import get_season_result
 from bot.rendering import ASSETS_ROOT
 
@@ -140,9 +141,11 @@ class SeasonService:
 
             session.add(Season(number=season_number, status=SeasonStatus.ACTIVE))
             await session.commit()
+            archived = active.number if active else None
+
+        await audit.record("season.create", "season", season_number, archived=archived, forced=force)
 
         await self._clear_generated_assets()
-
         await self.advance_state("OFFSEASON", force=True)
         return True
 
@@ -176,6 +179,7 @@ class SeasonService:
                 result.runner_up.name if result.runner_up else None
             )
 
+        await audit.record("season.close", "season", season, champion=champion, forced=force)
         await self.advance_state("OFFSEASON", force=force)
         return {"ok": True, "season": season, "champion": champion, "runner_up": runner_up}
 
@@ -239,6 +243,11 @@ class SeasonService:
             logger.warning("Forced season state %s -> %s", current, state_upper)
 
         await config.set_season_state(state_upper)
+        if state_upper != current:
+            await audit.record(
+                "stage.force" if error else "stage.advance",
+                "stage", state_upper, previous=current,
+            )
         return True
 
     async def get_state(self) -> str:

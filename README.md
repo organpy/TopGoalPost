@@ -336,6 +336,7 @@ the reset card if one is played.
 | `/season status` | Current season number, state and next state |
 | `/season create N [force]` | Create Season N (archives the current season, history kept). Refuses an unclosed season unless `force` |
 | `/season advance STATE [force]` | Move to the next state; `force` skips/rewinds (logged) |
+| `/audit [limit] [action]` | Recent score edits, forfeits, stage changes, season and config changes, with who did them |
 | `/season close` | After the grand final: record the champion, post the recap, go to OFFSEASON |
 
 `!season status|create|advance` remain as prefix equivalents.

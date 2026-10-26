@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 from bot.db import init_db
 from bot.config import Config
+from bot.services.audit import current_actor
 from bot.utils.errors import (
     describe_app_command_error,
     describe_command_error,
@@ -73,6 +74,8 @@ class TopGoalPostBot(commands.Bot):
     async def setup_hook(self):
         """Called automatically when the bot starts up. Use for async initialization."""
         self.tree.on_error = self.on_app_command_error
+        self.tree.interaction_check = self._track_app_actor
+        self.before_invoke(self._track_prefix_actor)
 
         logger.info("Initializing database...")
         await init_db()
@@ -105,6 +108,15 @@ class TopGoalPostBot(commands.Bot):
         else:
             await self.tree.sync()
             logger.info("Synced commands globally")
+
+    @staticmethod
+    async def _track_app_actor(interaction: discord.Interaction) -> bool:
+        current_actor.set(interaction.user.id)
+        return True
+
+    @staticmethod
+    async def _track_prefix_actor(ctx: commands.Context) -> None:
+        current_actor.set(ctx.author.id)
 
     async def on_command_error(self, ctx: commands.Context, error: Exception):
         if isinstance(error, commands.CommandNotFound):

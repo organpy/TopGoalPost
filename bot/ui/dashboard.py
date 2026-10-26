@@ -8,6 +8,7 @@ from discord import app_commands
 from sqlalchemy import select
 
 from bot.db import get_db_manager, PlayerSeason
+from bot.services import audit
 from bot.services.season import SeasonService
 from bot.services.pairing import PairingService
 from bot.services.playin import PlayinService
@@ -59,6 +60,7 @@ class SingleConfigModal(discord.ui.Modal):
                 return
 
         await cfg.set(self.key, val)
+        await audit.record("config.set", "config", self.key, actor_id=interaction.user.id, value=val)
         await interaction.response.send_message(f"Set **{self.label}** → `{val}`", ephemeral=True)
 
 

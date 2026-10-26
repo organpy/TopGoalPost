@@ -261,6 +261,23 @@ class MatchReport(Base):
         return f"<MatchReport(id={self.id}, match_id={self.match_id}, status={self.status.value})>"
 
 
+class AuditLog(Base):
+    """Who changed tournament state, and how. Never store secrets here."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    def __repr__(self):
+        return f"<AuditLog(id={self.id}, action={self.action})>"
+
+
 class ImageCache(Base):
     __tablename__ = "images"
 

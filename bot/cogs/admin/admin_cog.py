@@ -3,13 +3,18 @@
 import importlib
 import os
 
+from datetime import timezone
+from typing import Optional
+
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from bot.utils.errors import error_message, log_error
-from bot.cogs.checks import require_host
+from bot.cogs.checks import require_host, require_host_app
 
 from bot.db import get_db_manager, ImageCacheRepository
+from bot.services import audit
 from bot.services.season import SeasonService
 from bot.config import Config
 from bot.rendering import StandingsMaker, ASSETS_ROOT
@@ -252,6 +257,31 @@ class AdminCog(commands.Cog):
             f"Players with unplayed {state} matches but no scheduling thread:\n"
             + " ".join(f"<@{d}>" for d in missing)
         )
+
+    @app_commands.command(name="audit", description="Recent admin and score changes (host)")
+    @app_commands.describe(
+        limit="How many entries (max 25)",
+        action="Filter by action prefix, e.g. score, stage, season, config, reset",
+    )
+    @require_host_app()
+    async def audit_cmd(
+        self,
+        interaction: discord.Interaction,
+        limit: app_commands.Range[int, 1, 25] = 15,
+        action: Optional[str] = None,
+    ):
+        entries = await audit.recent(limit, action)
+        if not entries:
+            await interaction.response.send_message("No audit entries.", ephemeral=True)
+            return
+        lines = []
+        for e in entries:
+            ts = int(e.created_at.replace(tzinfo=timezone.utc).timestamp())
+            who = f"<@{e.actor_id}>" if e.actor_id else "system"
+            target = f" {e.target_type}:{e.target_id}" if e.target_type else ""
+            details = f" `{e.details}`" if e.details else ""
+            lines.append(f"<t:{ts}:f> {who} **{e.action}**{target}{details}")
+        await interaction.response.send_message("\n".join(lines)[:2000], ephemeral=True)
 
     @commands.Cog.listener()
     async def on_user_update(self, before: discord.User, after: discord.User):

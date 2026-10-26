@@ -20,6 +20,7 @@ from bot.db import (
     EventRepository,
     PlayerSeasonRepository,
 )
+from bot.services import audit
 from bot.services.pairing import ADVANCEMENT_MAP
 
 
@@ -113,6 +114,14 @@ class MatchService:
         else:
             await self._propagate(match_id)
 
+        await audit.record(
+            "score.edit" if was_completed else "score.report",
+            "match",
+            match_id,
+            score=f"{p1_goals}-{p2_goals}",
+            winner_side=winner_side,
+            old_winner_side=old_winner_side,
+        )
         result = {
             "match_id": match_id,
             "winner_id": winner_id,
@@ -182,6 +191,7 @@ class MatchService:
         else:
             await self._propagate(match_id)
 
+        await audit.record("score.forfeit", "match", match_id, loser_player_id=loser_id)
         result = {"match_id": match_id, "forfeited_by": loser_id}
         if playin_advance:
             result["playin_advance"] = playin_advance
@@ -346,6 +356,7 @@ class MatchService:
 
     async def _reset_after_open_edit(self, season: int) -> None:
         """Open edits can change Playin pools and everything downstream."""
+        await audit.record("reset.downstream", "season", season, after="OPEN")
         await self._delete_event_matches(season, EventType.PLAYIN)
         await self._delete_event_matches(season, EventType.SWISS)
         await self._delete_event_matches(season, EventType.PLAYOFF)
@@ -355,6 +366,7 @@ class MatchService:
     async def _reset_after_playin_edit(
         self, season: int, round_num: int = 1
     ) -> None:
+        await audit.record("reset.downstream", "season", season, after="PLAYIN", round=round_num)
         # An R1/R2/R3 correction changes who belongs in the conditional cut.
         # Correcting a cut match itself keeps the rest of the cut round intact.
         if round_num < 4:
@@ -379,6 +391,7 @@ class MatchService:
         The fixed ladder is never deleted — its feeder links are what keep the
         board readable — so rescoring just empties the downstream slots.
         """
+        await audit.record("reset.downstream", "season", season, after="SWISS", match=match_id)
         await self._clear_prereq_descendants(match_id)
         await self._delete_event_matches(season, EventType.PLAYOFF)
         await self._set_state("SWISS")

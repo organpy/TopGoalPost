@@ -8,6 +8,7 @@ from bot.utils.errors import ReportingView
 
 from bot.cogs.checks import is_moderator
 from bot.config import Config
+from bot.services.audit import current_actor
 from bot.services.match_report import MatchReportService
 
 
@@ -45,6 +46,7 @@ class ReportActionButton(
         return cls(match["action"], int(match["report_id"]))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        current_actor.set(interaction.user.id)
         service = MatchReportService()
         report = await service.get(self.report_id)
         if report is None:
@@ -80,6 +82,7 @@ class ReportReasonModal(discord.ui.Modal):
         self.add_item(self.reason)
 
     async def on_submit(self, interaction: discord.Interaction):
+        current_actor.set(interaction.user.id)
         await interaction.response.defer()
         await apply_report_action(
             interaction, self.action, self.report_id, self.reason.value or None

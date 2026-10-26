@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from bot.utils.errors import error_message, log_error
 from bot.cogs.checks import require_host, require_host_app
+from bot.services import audit
 from bot.services.season import SeasonService, STATE_ORDER, next_state, transition_error
 from bot.db import get_db_manager, PlayerSeason, SeasonStatus
 from bot.config import Config
@@ -247,6 +248,7 @@ class SeasonAdminCog(commands.Cog):
                 await ctx.send("Channel ID must be a number.")
                 return
         await cfg.set(key, value)
+        await audit.record("config.set", "config", key, value=value)
         await ctx.send(f"Set `{key}` to `{value}`.")
 
     @commands.command(name="remove_config", help="Remove a bot configuration value")
@@ -255,6 +257,7 @@ class SeasonAdminCog(commands.Cog):
         cfg = Config()
         removed = await cfg.remove(key)
         if removed:
+            await audit.record("config.remove", "config", key)
             await ctx.send(f"Removed `{key}`.")
         else:
             await ctx.send(f"`{key}` was not set.")

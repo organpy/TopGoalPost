@@ -12,6 +12,7 @@ from .models import (
     Event,
     Match,
     MatchPlayer,
+    AuditLog,
     ImageCache,
     MatchReport,
     OPEN_REPORT_STATUSES,
@@ -399,6 +400,23 @@ class MatchReportRepository:
             report.resolved_at = datetime.utcnow()
         await self.session.flush()
         return report
+
+
+class AuditLogRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def add(self, **fields) -> AuditLog:
+        entry = AuditLog(**fields)
+        self.session.add(entry)
+        await self.session.flush()
+        return entry
+
+    async def recent(self, limit: int = 20, action: Optional[str] = None) -> list[AuditLog]:
+        stmt = select(AuditLog).order_by(AuditLog.id.desc()).limit(limit)
+        if action:
+            stmt = stmt.where(AuditLog.action.like(f"{action}%"))
+        return list((await self.session.execute(stmt)).scalars().all())
 
 
 class ImageCacheRepository:
