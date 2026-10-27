@@ -19,6 +19,7 @@ from bot.db import (
     MatchPlayerRepository,
 )
 from bot.services.season import SeasonService
+from bot.utils.countries import resolve_country
 
 
 class SignupService:
@@ -156,6 +157,38 @@ class SignupService:
             await session.commit()
 
         return True, f"Your display name has been changed to **{new_name}**."
+
+    async def edit_country(
+        self, discord_id: int, new_country: str
+    ) -> Tuple[bool, str]:
+        """Change a player's country at any time.
+
+        Country only affects display and flags, so unlike names it is not
+        restricted to the signup window. The previous value may be NULL.
+        """
+        code = resolve_country(new_country)
+        if code is None:
+            return False, f"Unknown country `{new_country}`."
+
+        async with self.db.get_session() as session:
+            player_repo = PlayerRepository(session)
+            player = await player_repo.get_by_discord_id(discord_id)
+            if not player:
+                return False, "You are not registered. Use `/signup` first."
+
+            old_country = player.country
+            if old_country and old_country.lower() == code:
+                return False, f"Your country is already **{code.upper()}**."
+
+            player.country = code
+            session.add(player)
+            await session.commit()
+
+        old_label = old_country.upper() if old_country else "—"
+        return True, (
+            f"Your country has been changed from **{old_label}** "
+            f"to **{code.upper()}**."
+        )
 
     async def import_seeds(self, discord_ids: list[int], season_number: int) -> Tuple[list[str], list[str]]:
         """Assign swiss_seed 1-N to players by discord_id order.

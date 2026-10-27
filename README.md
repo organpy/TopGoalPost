@@ -111,12 +111,14 @@ Players register with:
 ```
 /signup username:Alice country:US
 /editname name:NewName     # change display name (SIGNUP state only)
+/editcountry country:US     # change country (any time)
 /unregister                # before OPEN only
 /status                    # check registration
 ```
 
 Signups close the moment the season leaves `SIGNUP`: `/signup`, `/editname` and
-the persistent button all refuse at that point. A successful signup replies
+the persistent button all refuse at that point. `/editcountry` still works
+after signups close. A successful signup replies
 ephemerally with the next steps (`/set_timezone`, then `/add_timeslot`). Admins
 can still override a name with `/player set`.
 
@@ -179,8 +181,8 @@ Match 361 · Playoff W-R1-M3 · organ 5-0 dummy · Series 1-0 · G1 5-0, G2 3-2
 
 User-facing slash commands (`/signup`, `/profile`, `/playercard`, `/history`,
 `/open`, `/playins`, `/swiss`, `/playoff`, `/season_summary`, `/check_times`,
-`/set_timezone`, `/forfeit`, `/editname`, …) all reply ephemerally, so the
-channel stays clean.
+`/set_timezone`, `/forfeit`, `/editname`, `/editcountry`, …) all reply
+ephemerally, so the channel stays clean.
 
 `/set_score` can edit a completed match. The autocomplete searches every
 match in the season, including completed ones, shows the score, and marks
@@ -414,6 +416,7 @@ not rename the Discord nickname.
 | `/unregister` | Withdraw (before OPEN) |
 | `/status` | Check registration |
 | `/editname name:X` | Change display name (signups only) |
+| `/editcountry country:XX` | Change your country at any time |
 | `/report` | Pick match, then preset or custom score |
 | `/forfeit match_id:X` | Concede a match |
 | `/list_matches [stage] [status] [round_num] [player] [page]` | Browse matches with filters |

@@ -154,6 +154,21 @@ class TestSignupCog:
 
         cog.signup_service.edit_name.assert_awaited_once_with(123456789, "NewName")
 
+    async def test_editcountry_delegates(self, mock_interaction, mock_bot):
+        cog = SignupCog(mock_bot)
+        cog.signup_service.edit_country = AsyncMock(
+            return_value=(True, "Country changed!")
+        )
+
+        await cog.editcountry_cmd.callback(cog, mock_interaction, "Germany")
+
+        cog.signup_service.edit_country.assert_awaited_once_with(
+            123456789, "Germany"
+        )
+        mock_interaction.response.send_message.assert_awaited_once_with(
+            "Country changed!", ephemeral=True
+        )
+
     async def test_signup_delegates(self, mock_interaction, mock_bot):
         cog = SignupCog(mock_bot)
         cog.signup_service.register = AsyncMock(return_value=(True, "Registered!"))
@@ -1556,6 +1571,34 @@ class TestSignupLock:
         async with get_db_manager().get_session() as session:
             refreshed = await PlayerRepository(session).get_by_discord_id(556)
             assert refreshed.name == "After"
+
+    async def test_edit_country_accepts_null_old_country(self, db):
+        from bot.services.signup import SignupService
+        from bot.db import Player
+
+        async with get_db_manager().get_session() as session:
+            session.add(Player(discord_id=557, name="NoFlag", country=None))
+            await session.commit()
+
+        ok, msg = await SignupService().edit_country(557, "Germany")
+        assert ok is True
+        assert "—" in msg
+
+        async with get_db_manager().get_session() as session:
+            refreshed = await PlayerRepository(session).get_by_discord_id(557)
+            assert refreshed.country == "de"
+
+    async def test_edit_country_rejects_unknown_country(self, db):
+        from bot.services.signup import SignupService
+        from bot.db import Player
+
+        async with get_db_manager().get_session() as session:
+            session.add(Player(discord_id=558, name="NoFlag", country=None))
+            await session.commit()
+
+        ok, msg = await SignupService().edit_country(558, "Neverland")
+        assert ok is False
+        assert "Unknown country" in msg
 
 
 class TestMatchConfirmView:

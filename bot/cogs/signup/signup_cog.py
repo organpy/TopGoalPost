@@ -59,6 +59,19 @@ class SignupCog(commands.Cog):
         success, msg = await self.signup_service.edit_name(interaction.user.id, name)
         await interaction.response.send_message(msg, ephemeral=True)
 
+    @app_commands.command(name="editcountry", description="Change your country")
+    @app_commands.describe(
+        country="Your country (for the flag on standings)"
+    )
+    @app_commands.autocomplete(country=country_autocomplete)
+    async def editcountry_cmd(
+        self, interaction: discord.Interaction, country: str
+    ):
+        success, msg = await self.signup_service.edit_country(
+            interaction.user.id, country
+        )
+        await interaction.response.send_message(msg, ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(SignupCog(bot))
