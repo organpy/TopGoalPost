@@ -975,65 +975,48 @@ class MatchService:
             msg += f" Skipped {skipped} Swiss/Playoff match(es)."
         return msg
 
-    async def forfeit_all_player_matches(
-        self, discord_id: int, season: Optional[int] = None
-    ) -> str:
-        """Forfeit all uncompleted matches for a player.
+    async def forfeit_all_player_matches(self, discord_id: int, season: int) -> str:
+        """Forfeit all of a player's uncompleted matches in ``season``.
 
-        Each match gets a 1-0 default score in favor of the opponent. When a
-        season is given, only that season's matches are touched.
+        Each match goes through :meth:`forfeit`, so brackets propagate, Open
+        stats sync and the forfeit is audited. Forfeits can create follow-up
+        matches (Bo3 games, losers bracket, next Playin round), so we repeat
+        until the player has nothing left to forfeit.
 
         Returns:
             A human-readable result message.
         """
         from bot.db import PlayerRepository
+        from bot.services.season import SeasonService
+
+        if err := await SeasonService().require_active(season):
+            return err
 
         async with self.db.get_session() as session:
-            player_repo = PlayerRepository(session)
-            player = await player_repo.get_by_discord_id(discord_id)
+            player = await PlayerRepository(session).get_by_discord_id(discord_id)
             if not player:
                 return f"No player found with Discord ID {discord_id}."
 
-            mp_repo = MatchPlayerRepository(session)
-            mps = await mp_repo.get_unplayed_player_matches(player.id, season=season)
+        forfeited = 0
+        tried: set[int] = set()
+        while True:
+            async with self.db.get_session() as session:
+                mps = await MatchPlayerRepository(session).get_unplayed_player_matches(
+                    player.id, season=season
+                )
+            pending = sorted({mp.match_id for mp in mps} - tried)
+            if not pending:
+                break
+            for match_id in pending:
+                tried.add(match_id)
+                result = await self.forfeit(match_id, player.id)
+                if result and "error" in result:
+                    return result["error"]
+                if result:
+                    forfeited += 1
 
-            if not mps:
-                return f"{player.name} has no uncompleted matches to forfeit."
-
-            forfeited = 0
-            for mp in mps:
-                match_id = mp.match_id
-                stmt = select(Match).options(selectinload(Match.match_players)).where(Match.id == match_id)
-                result = await session.execute(stmt)
-                match = result.scalars().first()
-                if not match or match.completed_at:
-                    continue
-
-                opponent_mp = None
-                for other in match.match_players:
-                    if other.player_id and other.player_id != player.id:
-                        opponent_mp = other
-                        break
-
-                if not opponent_mp:
-                    continue
-
-                winner_side = opponent_mp.side
-                p1_goals = 1 if winner_side == 0 else 0
-                p2_goals = 1 if winner_side == 1 else 0
-
-                await mp_repo.update_score(mp.id, 0)
-                await mp_repo.update_score(opponent_mp.id, 1)
-                await mp_repo.set_winner(match_id, winner_side)
-                match.completed_at = datetime.utcnow()
-                session.add(match)
-                forfeited += 1
-
-            if forfeited == 0:
-                return f"Could not forfeit any matches for {player.name}."
-
-            await session.commit()
-
+        if forfeited == 0:
+            return f"{player.name} has no uncompleted matches to forfeit."
         return f"Forfeited {forfeited} match(es) for <@{discord_id}>."
 
     async def get_match_history(self, player_id: int, season: int) -> list[dict]:

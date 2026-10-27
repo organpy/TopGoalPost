@@ -717,6 +717,9 @@ class PlayerCog(commands.Cog):
         self, interaction: discord.Interaction, target: discord.User
     ):
         await interaction.response.defer(ephemeral=True)
+        season_num = await self._season_or_reply(interaction)
+        if not season_num:
+            return
         answer = await confirm(
             interaction,
             f"Forfeit every uncompleted match for {target.mention}? "
@@ -727,8 +730,7 @@ class PlayerCog(commands.Cog):
             return
 
         msg = await self.match_service.forfeit_all_player_matches(
-            target.id,
-            season=await self.season_service.get_current_season_number(),
+            target.id, season=season_num
         )
         await interaction.followup.send(msg, ephemeral=True)
 
