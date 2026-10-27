@@ -207,16 +207,7 @@ class DashboardView(ReportingView):
 
     @discord.ui.button(label="Finish Playins", style=discord.ButtonStyle.secondary, emoji="✅", row=1)
     async def finish_playins(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-        season = await self.season_service.get_current_season_number()
-        if not season:
-            await interaction.followup.send("No active season.", ephemeral=True)
-            return
-        try:
-            await self.playin_service.finish_playins(season)
-            await interaction.followup.send("Playins finalized.", ephemeral=True)
-        except ValueError as e:
-            await interaction.followup.send(str(e), ephemeral=True)
+        await self._run_stage(interaction, self.flow_service.finish_playins)
 
     async def _thread_context(self, interaction: discord.Interaction):
         """(channel, season, state) for thread buttons, or None after replying."""

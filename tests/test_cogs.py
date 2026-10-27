@@ -136,11 +136,11 @@ class TestTournamentCog:
     async def test_finish_playins(self, mock_ctx, mock_bot):
         cog = TournamentCog(mock_bot)
         cog.season_service.get_current_season_number = AsyncMock(return_value=1)
-        cog.playin_service.finish_playins = AsyncMock()
+        cog.flow_service.finish_playins = AsyncMock(return_value={"ok": True, "message": "ok"})
 
         await cog.finish_playins_cmd.callback(cog, mock_ctx)
 
-        cog.playin_service.finish_playins.assert_awaited_once_with(1)
+        cog.flow_service.finish_playins.assert_awaited_once_with(1)
 
 
 class TestSignupCog:

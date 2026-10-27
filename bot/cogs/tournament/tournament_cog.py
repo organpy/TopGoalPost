@@ -243,12 +243,8 @@ class TournamentCog(commands.Cog):
             await ctx.send("No active season.")
             return
         
-        message = await ctx.send("Finishing playins...")
-        try:
-            await self.playin_service.finish_playins(season_num)
-            await message.edit(content="Playins finished! Qualifiers have been ranked.")
-        except ValueError as e:
-            await message.edit(content=f"Could not finish playins: {e}")
+        result = await self.flow_service.finish_playins(season_num)
+        await ctx.send(result.get("error") or result["message"])
 
     async def _swiss_impl(self, ctx, round_num=None):
         await self._stage_prefix(ctx, self.flow_service.start_swiss, round_num)
@@ -394,14 +390,8 @@ class TournamentCog(commands.Cog):
         if not season:
             await interaction.followup.send("No active season.", ephemeral=True)
             return
-        try:
-            await self.playin_service.finish_playins(season)
-            await interaction.followup.send(
-                "Playins finalized. Start Swiss with `/tourney swiss_round`.",
-                ephemeral=True,
-            )
-        except ValueError as e:
-            await interaction.followup.send(str(e), ephemeral=True)
+        result = await self.flow_service.finish_playins(season)
+        await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
 
     @tourney.command(
         name="skip_open",

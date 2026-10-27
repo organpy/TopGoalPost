@@ -277,6 +277,19 @@ class TournamentFlowService:
             ),
         }
 
+    async def finish_playins(self, season: int) -> dict[str, Any]:
+        """Manual Playin finalization; only meaningful during PLAYIN."""
+        if err := await self._require_state(("PLAYIN",)):
+            return err
+        try:
+            await self.playin_service.finish_playins(season)
+        except ValueError as e:
+            return {"error": str(e)}
+        return {
+            "ok": True,
+            "message": "Playins finalized. Start Swiss with `/tourney swiss_round`.",
+        }
+
     async def start_swiss(self, season: int, round_num: Optional[int] = None) -> dict[str, Any]:
         """Create the fixed Swiss ladder, then move PLAYIN → SWISS."""
         if err := await self._require_state(("PLAYIN", "SWISS")):

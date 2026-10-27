@@ -1155,6 +1155,38 @@ class TestPlayinService:
         assert created == 0
         assert byes == 0
 
+    async def test_finish_playins_refuses_unfinished_rounds(
+        self, db, seed_data, setup_playin_data, monkeypatch
+    ):
+        from bot.services.playin import PlayinService
+
+        monkeypatch.setattr("bot.services.playin.prerender", AsyncMock())
+        svc = PlayinService()
+        await svc.generate_playins(1)
+
+        with pytest.raises(ValueError, match="not complete"):
+            await svc.finish_playins(1)
+
+        async with db.get_session() as session:
+            event = await EventRepository(session).get_by_type_and_season(
+                EventType.PLAYIN, 1
+            )
+            matches = await MatchRepository(session).get_by_event(event.id)
+            assert not any((m.series_game or 0) >= 4 for m in matches)
+
+    async def test_flow_finish_playins_requires_playin_state(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await Config().set("stage", "SWISS")
+        flow = TournamentFlowService()
+        flow.playin_service.finish_playins = AsyncMock()
+
+        result = await flow.finish_playins(1)
+
+        assert "error" in result
+        flow.playin_service.finish_playins.assert_not_awaited()
+
     async def test_finish_playins_ranks_ladder(
         self, db, seed_data, setup_playin_data, monkeypatch
     ):

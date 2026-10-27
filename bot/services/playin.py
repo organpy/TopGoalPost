@@ -409,6 +409,20 @@ class PlayinService:
 
     async def finish_playins(self, season: int) -> None:
         """Rank exactly the target number of qualifiers and eliminate the rest."""
+        # The cut round is computed from R3 results, so R1-R3 must be final
+        # before it may be created; otherwise partial results decide the cut.
+        async with self.db.get_session() as session:
+            event = await self._get_or_create_playin_event(season)
+            matches = await MatchRepository(session).get_by_event(event.id)
+        pre_cut = [
+            m for m in matches
+            if (m.series_game or 0) < CUT_ROUND and m.completed_at is None
+        ]
+        if pre_cut:
+            raise ValueError(
+                f"Playins are not complete: {len(pre_cut)} R1-R3 match(es) remain."
+            )
+
         # Manual finalization must not bypass the conditional cut.
         created = await self._create_cut_round(season)
         if created:
