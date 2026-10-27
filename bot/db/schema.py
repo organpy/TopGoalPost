@@ -30,6 +30,7 @@ def alembic_head() -> str:
 
 def _sync(conn) -> list[str]:
     changes: list[str] = []
+    skipped: list[str] = []
     Base.metadata.create_all(conn)
     insp = inspect(conn)
     for table in Base.metadata.sorted_tables:
@@ -42,6 +43,7 @@ def _sync(conn) -> list[str]:
                     "Column %s.%s is missing and NOT NULL; run Alembic manually.",
                     table.name, column.name,
                 )
+                skipped.append(f"{table.name}.{column.name}")
                 continue
             col_type = column.type.compile(dialect=conn.dialect)
             conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}'))
@@ -60,12 +62,17 @@ def _sync(conn) -> list[str]:
                 logger.error(
                     "Could not add index %s; fix the data and restart.", index.name, exc_info=True
                 )
+                skipped.append(index.name)
 
     head = alembic_head()
     if not insp.has_table("alembic_version"):
         conn.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)"))
     current = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    if current is None:
+    if current is None and skipped:
+        # Stamping head would claim the schema is complete and hide the gap
+        # from Alembic and /doctor; leave it unstamped until fixed.
+        logger.error("Not stamping Alembic head; incomplete schema: %s", ", ".join(skipped))
+    elif current is None:
         conn.execute(text("INSERT INTO alembic_version (version_num) VALUES (:v)"), {"v": head})
         changes.append(f"stamped alembic {head}")
     elif current != head:

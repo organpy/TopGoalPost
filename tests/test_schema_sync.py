@@ -35,3 +35,16 @@ async def test_sync_is_idempotent(tmp_path):
     db_path = tmp_path / "fresh.db"
     await _sync(db_path)
     assert await _sync(db_path) == []
+
+
+async def test_incomplete_sync_is_not_stamped(tmp_path):
+    db_path = tmp_path / "broken.db"
+    with sqlite3.connect(db_path) as conn:
+        # `name` is NOT NULL in the model, so sync cannot add it.
+        conn.execute("CREATE TABLE players (id INTEGER PRIMARY KEY, discord_id INTEGER NOT NULL)")
+
+    changes = await _sync(db_path)
+
+    assert not any(c.startswith("stamped alembic") for c in changes)
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone() is None
