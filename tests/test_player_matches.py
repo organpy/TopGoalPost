@@ -60,3 +60,17 @@ class TestForfeitAll:
         assert not await _completed(db, old)
 
 
+class TestRemoveFromMatches:
+    async def test_only_touches_given_season(self, db, seed_data, open_event):
+        players = seed_data["players"]
+        current = await _match(db, open_event.id, players[0].id, players[1].id)
+        old = await _old_season_match(db, seed_data)
+
+        await MatchService().remove_player_from_matches(players[0].discord_id, 1)
+
+        async with db.get_session() as session:
+            repo = MatchPlayerRepository(session)
+            current_ids = {mp.player_id for mp in await repo.get_by_match(current)}
+            old_ids = {mp.player_id for mp in await repo.get_by_match(old)}
+        assert players[0].id not in current_ids
+        assert players[0].id in old_ids

@@ -908,16 +908,12 @@ class MatchService:
                 return f"No player found with Discord ID {discord_id}."
 
             mp_repo = MatchPlayerRepository(session)
-            mps = await mp_repo.get_player_matches(player.id)
+            mps = await mp_repo.get_unplayed_player_matches(player.id, season=season)
             removed = 0
             for mp in mps:
-                stmt = select(Match).options(selectinload(Match.match_players)).where(Match.id == mp.match_id)
-                result = await session.execute(stmt)
-                match = result.scalars().first()
-                if match and not match.completed_at:
-                    mp.player_id = None
-                    session.add(mp)
-                    removed += 1
+                mp.player_id = None
+                session.add(mp)
+                removed += 1
 
             if removed == 0:
                 return f"{player.name} has no uncompleted matches to remove."
