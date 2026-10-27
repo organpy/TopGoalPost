@@ -396,7 +396,7 @@ database. Every subcommand is host-only and replies ephemerally.
 | `/player remove_from_matches target:@P` | Detach a player from uncompleted matches, keeping the matches |
 | `/player delete_matches target:@P` | Delete a player's uncompleted Open/Playin matches |
 | `/player forfeit_all target:@P` | Forfeit every uncompleted match |
-| `/player substitute old:@P new:@P` | Replace a player in all uncompleted matches |
+| `/player substitute old:@P new:@P [country]` | Replace a player in all uncompleted matches; a missing replacement country is inherited from the old player |
 
 Destructive subcommands ask for a Confirm click first. `/player info` reports
 `Skipped Open (seed #N)` for returning seeds and `Did not play` for players

@@ -10,6 +10,7 @@ data/backups/*
 __pycache__/
 *.py[cod]
 .pytest_cache/
+smoke.db-*
 
 # Rendered standings images are regenerated on demand
 assets/tables/*.png

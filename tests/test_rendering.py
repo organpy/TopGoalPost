@@ -392,7 +392,7 @@ async def test_swiss_renders_incremental_one_sided_slot(db, tmp_path, monkeypatc
         session.add(Season(number=1, status=SeasonStatus.ACTIVE))
         await session.flush()
         p1 = Player(discord_id=101, name="Alice", country="us")
-        p2 = Player(discord_id=102, name="Bob", country="fr")
+        p2 = Player(discord_id=102, name="Bob", country=None)
         session.add_all([p1, p2])
         await session.flush()
         event = Event(name="Swiss", type=EventType.SWISS, season=1)

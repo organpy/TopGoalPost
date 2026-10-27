@@ -635,19 +635,27 @@ class PlayerCog(commands.Cog):
         return None, token, None, None
 
     async def _create_substitute_player(
-        self, name: str, discord_id: Optional[int]
+        self,
+        name: str,
+        discord_id: Optional[int],
+        country: Optional[str] = None,
     ):
         async with self.db.get_session() as session:
             repo = PlayerRepository(session)
             if discord_id is not None:
                 existing = await repo.get_by_discord_id(discord_id)
                 if existing:
+                    if country is not None:
+                        existing.country = country
+                        await session.commit()
                     return existing
                 player = await repo.create(
-                    discord_id=discord_id, name=name[:255]
+                    discord_id=discord_id, name=name[:255], country=country
                 )
             else:
-                player = await repo.create_placeholder(name=name[:255])
+                player = await repo.create_placeholder(
+                    name=name[:255], country=country
+                )
             await session.commit()
             return player
 
@@ -741,9 +749,15 @@ class PlayerCog(commands.Cog):
     @app_commands.describe(
         old="Player being replaced (name, player ID or Discord ID)",
         new="Replacement (name, player ID or Discord ID; may be new)",
+        country=(
+            "Country for the replacement (name or 2-letter code; "
+            "fills a missing country from the old player)"
+        ),
     )
     @app_commands.autocomplete(
-        old=username_autocomplete, new=username_autocomplete
+        old=username_autocomplete,
+        new=username_autocomplete,
+        country=country_choices,
     )
     @require_host_app()
     async def substitute_cmd(
@@ -751,11 +765,21 @@ class PlayerCog(commands.Cog):
         interaction: discord.Interaction,
         old: str,
         new: str,
+        country: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         season_num = await self._season_or_reply(interaction)
         if not season_num:
             return
+
+        country_code = None
+        if country is not None:
+            country_code = resolve_country(country)
+            if country_code is None:
+                await interaction.followup.send(
+                    f"Unknown country `{country}`.", ephemeral=True
+                )
+                return
 
         old_player = await self._resolve_player_token(old, season_num)
         if not old_player:
@@ -791,8 +815,15 @@ class PlayerCog(commands.Cog):
 
         if new_player is None:
             new_player = await self._create_substitute_player(
-                new_name, new_discord_id
+                new_name, new_discord_id, country_code
             )
+        elif country_code and new_player.id != old_player.id:
+            async with self.db.get_session() as session:
+                await PlayerRepository(session).update(
+                    new_player.id, country=country_code
+                )
+                await session.commit()
+            new_player.country = country_code
 
         msg = await self.match_service.substitute_player(
             old_player.id, new_player.id, season_num

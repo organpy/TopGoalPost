@@ -746,7 +746,8 @@ class MatchService:
         the original player for history.
 
         The original ``PlayerSeason`` row is transferred (or merged) to the new
-        player so seeds, HP and Open records follow the slot.
+        player so seeds, HP and Open records follow the slot. If the replacement
+        has no country, it inherits the replaced player's country.
         """
         from bot.db import PlayerRepository, PlayerSeasonRepository
 
@@ -762,6 +763,10 @@ class MatchService:
                 return f"No player found with internal ID {old_player_id}."
             if not new_player:
                 return f"No player found with internal ID {new_player_id}."
+
+            if old_player.country and not new_player.country:
+                new_player.country = old_player.country
+                session.add(new_player)
 
             mp_repo = MatchPlayerRepository(session)
             moved_match_ids: set[int] = set()

@@ -580,6 +580,49 @@ class TestMatchService:
             assert new_ps.open_wins == 3
             assert new_ps.hp == 1
 
+    async def test_substitute_inherits_country_when_new_player_has_none(
+        self, db, seed_data
+    ):
+        from bot.services.match import MatchService
+
+        svc = MatchService()
+        players = seed_data["players"]
+
+        async with db.get_session() as session:
+            repo = PlayerRepository(session)
+            await repo.update(players[0].id, country="br")
+            await repo.update(players[2].id, country=None)
+            await session.commit()
+
+        result = await svc.substitute_player(
+            players[0].id, players[2].id, 1
+        )
+        assert "Substituted" in result
+
+        async with db.get_session() as session:
+            new_player = await PlayerRepository(session).get_by_id(players[2].id)
+            assert new_player.country == "br"
+
+    async def test_substitute_keeps_existing_country_on_replacement(
+        self, db, seed_data
+    ):
+        from bot.services.match import MatchService
+
+        svc = MatchService()
+        players = seed_data["players"]
+
+        async with db.get_session() as session:
+            repo = PlayerRepository(session)
+            await repo.update(players[0].id, country="br")
+            await repo.update(players[2].id, country="de")
+            await session.commit()
+
+        await svc.substitute_player(players[0].id, players[2].id, 1)
+
+        async with db.get_session() as session:
+            new_player = await PlayerRepository(session).get_by_id(players[2].id)
+            assert new_player.country == "de"
+
     async def test_substitute_moves_completed_open_but_not_playin(
         self, db, seed_data
     ):

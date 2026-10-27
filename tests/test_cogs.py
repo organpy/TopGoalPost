@@ -1309,7 +1309,7 @@ class TestPlayerAdmin:
         cog = module.PlayerCog(mock_bot)
         cog.match_service = MagicMock()
         cog.match_service.substitute_player = AsyncMock(return_value="done")
-        old_player = MagicMock(id=1, name="Old", discord_id=42)
+        old_player = MagicMock(id=1, name="Old", discord_id=42, country="br")
         newcomer = MagicMock(id=9, name="Ghost", discord_id=-1)
         cog.stats_service.resolve_player = AsyncMock(
             side_effect=[old_player, None]
@@ -1323,8 +1323,85 @@ class TestPlayerAdmin:
                 cog, mock_interaction, "Old", "Ghost"
             )
 
-        cog._create_substitute_player.assert_awaited_once_with("Ghost", None)
+        cog._create_substitute_player.assert_awaited_once_with(
+            "Ghost", None, None
+        )
         cog.match_service.substitute_player.assert_awaited_once_with(1, 9, 1)
+
+    async def test_substitute_applies_explicit_country(
+        self, mock_interaction, mock_bot
+    ):
+        from bot.cogs.admin import player_cog as module
+
+        await self._register()
+        cog = module.PlayerCog(mock_bot)
+        cog.match_service = MagicMock()
+        cog.match_service.substitute_player = AsyncMock(return_value="done")
+        old_player = MagicMock(id=1, name="Old", discord_id=42, country="br")
+        newcomer = MagicMock(id=9, name="Ghost", discord_id=-1)
+        cog.stats_service.resolve_player = AsyncMock(
+            side_effect=[old_player, None]
+        )
+        cog._create_substitute_player = AsyncMock(return_value=newcomer)
+        mock_interaction.guild.get_member_named.return_value = None
+        mock_interaction.guild.members = []
+
+        with patch.object(module, "confirm", AsyncMock(return_value=True)):
+            await cog.substitute_cmd.callback(
+                cog, mock_interaction, "Old", "Ghost", "Germany"
+            )
+
+        cog._create_substitute_player.assert_awaited_once_with(
+            "Ghost", None, "de"
+        )
+        cog.match_service.substitute_player.assert_awaited_once_with(1, 9, 1)
+
+    async def test_substitute_updates_existing_player_country(
+        self, mock_interaction, mock_bot
+    ):
+        from bot.cogs.admin import player_cog as module
+
+        old_id = await self._register(discord_id=42, name="Old")
+        async with get_db_manager().get_session() as session:
+            new = await PlayerRepository(session).create(
+                discord_id=7, name="New", country="us"
+            )
+            await PlayerSeasonRepository(session).create(
+                player_id=new.id, season_number=1
+            )
+            await session.commit()
+            new_id = new.id
+        cog = module.PlayerCog(mock_bot)
+        cog.match_service = MagicMock()
+        cog.match_service.substitute_player = AsyncMock(return_value="done")
+        old_player = MagicMock(id=old_id, name="Old", discord_id=42, country="br")
+        new_player = MagicMock(id=new_id, name="New", discord_id=7, country="us")
+        cog.stats_service.resolve_player = AsyncMock(
+            side_effect=[old_player, new_player]
+        )
+        mock_interaction.guild = None
+
+        with patch.object(module, "confirm", AsyncMock(return_value=True)):
+            await cog.substitute_cmd.callback(
+                cog, mock_interaction, "Old", "New", "Germany"
+            )
+
+        async with get_db_manager().get_session() as session:
+            stored = await PlayerRepository(session).get_by_id(new_id)
+            assert stored.country == "de"
+        cog.match_service.substitute_player.assert_awaited_once_with(
+            old_id, new_id, 1
+        )
+
+    async def test_create_substitute_player_saves_country(self, mock_bot):
+        from bot.cogs.admin import player_cog as module
+
+        cog = module.PlayerCog(mock_bot)
+        player = await cog._create_substitute_player("Ghost", None, "br")
+
+        async with get_db_manager().get_session() as session:
+            stored = await PlayerRepository(session).get_by_id(player.id)
+            assert stored.country == "br"
 
     async def test_reset_matches_delegates_to_the_service(
         self, mock_interaction, mock_bot

@@ -413,7 +413,9 @@ def make_and_fill_box(
             )
 
 
-def _country_to_emoji(code: str) -> str:
+def _country_to_emoji(code: str | None) -> str:
+    if not code:
+        return ""
     if len(code) == 2 and code.isascii() and code.isalpha():
         return "".join(chr(0x1F1E6 + ord(c.upper()) - ord("A")) for c in code)
     return code
