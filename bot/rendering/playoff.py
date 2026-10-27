@@ -61,6 +61,7 @@ PLAYOFF_COLS = 8
 PLAYOFF_CONNECTOR = (170, 178, 190)
 PLAYOFF_LABEL_COLOR = (195, 202, 214)
 PLAYOFF_RESET_COLOR = (200, 60, 60)
+PLAYOFF_LOSERS_COLOR = (124, 58, 178)
 PLAYOFF_CHAMPION_COLOR = (245, 196, 70)
 PLAYOFF_LABEL_FONT = ImageFont.truetype(
     font=asset_path("fonts", "Agdasima-Regular.ttf"), size=20
@@ -843,7 +844,7 @@ async def get_playoff(view: str = "full", season: int | None = None):
         table_hash = hashlib.sha3_256(
             bytes(
                 repr(_match_signature(matches))
-                + f"playoff_v13_{view}_{season}",
+                + f"playoff_v14_{view}_{season}",
                 "utf-8",
             )
         ).hexdigest()
@@ -913,7 +914,11 @@ async def get_playoff(view: str = "full", season: int | None = None):
                 top=top,
                 matches=raw_slot_map.get(slot, []),
                 letter=slot,
-                color=PLAYOFF_RESET_COLOR if slot == "GF-M2" else playoff_color,
+                color=(
+                    PLAYOFF_RESET_COLOR if slot == "GF-M2"
+                    else PLAYOFF_LOSERS_COLOR if slot.startswith("L-")
+                    else playoff_color
+                ),
                 row_by_id=row_by_id,
                 champion_id=champion_id,
                 champion_slot=champion_slot,
