@@ -346,15 +346,17 @@ def _draw_awards(d: ImageDraw.ImageDraw, stats: PlayerStats) -> None:
         width=2 if won else 1,
     )
     _draw_trophy(d, MARGIN + 58, top + 24, 68, color)
-    d.text((MARGIN + 112, top + 54), str(won), font=_font(64), fill=color, anchor="lm")
-    d.text(
-        (MARGIN + 112 + _font(64).getlength(str(won)) + 12, top + 54),
-        "TITLE" if won == 1 else "TITLES",
-        font=_font(22),
-        fill=color,
-        anchor="lm",
-    )
-    d.text((MARGIN + 112, top + 92), "PBL CIRCUITS WON", font=_font(15), fill=MUTED, anchor="lm")
+    # "N TITLES" and its caption form one block, centred on each other and
+    # vertically level with the trophy.
+    label = "TITLE" if won == 1 else "TITLES"
+    count_w = _font(64).getlength(str(won))
+    block_w = count_w + 12 + _font(22).getlength(label)
+    block_left = MARGIN + 112
+    block_mid = block_left + block_w / 2
+    count_y = top + 46
+    d.text((block_left, count_y), str(won), font=_font(64), fill=color, anchor="lm")
+    d.text((block_left + count_w + 12, count_y), label, font=_font(22), fill=color, anchor="lm")
+    d.text((block_mid, top + 82), "PBL CIRCUITS WON", font=_font(15), fill=MUTED, anchor="mm")
 
     # Right: one chip per won season.
     seasons_left = count_right + 16
