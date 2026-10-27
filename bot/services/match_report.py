@@ -35,6 +35,8 @@ class MatchReportService:
         winner_side: int,
     ) -> dict[str, Any]:
         """Store a pending report. Returns the report and the opponent to ping."""
+        if winner_side not in (0, 1):
+            return {"error": "Winner side must be 0 or 1."}
         if p1_goals < 0 or p2_goals < 0:
             return {"error": "Scores cannot be negative."}
         if p1_goals == p2_goals:

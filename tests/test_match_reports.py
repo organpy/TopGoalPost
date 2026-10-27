@@ -133,6 +133,14 @@ class TestMatchReportService:
         again = await svc.create_report(match_id, 222, 0, 2, 1)
         assert "already has a pending report" in again["error"]
 
+    async def test_invalid_winner_side_rejected(self, db):
+        from bot.services.match_report import MatchReportService
+
+        svc = MatchReportService()
+        match_id = await _scheduled_match(db)
+        created = await svc.create_report(match_id, 111, 1, 3, 2)
+        assert created["error"] == "Winner side must be 0 or 1."
+
     async def test_archived_match_report_rejected(self, db):
         from bot.db import SeasonStatus
         from bot.services.match_report import MatchReportService
