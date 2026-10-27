@@ -184,20 +184,29 @@ class SeasonService:
         return {"ok": True, "season": season, "champion": champion, "runner_up": runner_up}
 
     async def is_active(self, season: int) -> bool:
-        """Only the current season may be mutated; archived ones are read-only.
+        """Only the current, unclosed season may be mutated.
 
-        With no season configured at all there is nothing to protect.
+        Archived and closed seasons are read-only. With no season configured
+        at all there is nothing to protect.
         """
         current = await self.get_current_season_number()
-        if current is not None:
-            return season == current
+        if current is not None and season != current:
+            return False
         row = await self.get_season(season)
-        return row is None or row.status != SeasonStatus.ARCHIVED
+        if row is None:
+            return True
+        return row.status != SeasonStatus.ARCHIVED and row.ended_at is None
 
     async def require_active(self, season: int) -> Optional[str]:
-        """An error message when ``season`` is archived, otherwise None."""
+        """An error message when ``season`` is archived or closed, otherwise None."""
         if await self.is_active(season):
             return None
+        row = await self.get_season(season)
+        if row is not None and row.ended_at is not None and row.status != SeasonStatus.ARCHIVED:
+            return (
+                f"Season {season} is closed and read-only. "
+                "Start the next one with `/season create`."
+            )
         return f"Season {season} is archived and read-only."
 
     async def get_season(self, number: int) -> Optional[Season]:
@@ -236,7 +245,7 @@ class SeasonService:
 
         config = Config()
         current = await config.get_season_state()
-        error = transition_error(current, state_upper)
+        error = await self.advance_error(current, state_upper)
         if error and not force:
             return False
         if error:
@@ -249,6 +258,20 @@ class SeasonService:
                 "stage", state_upper, previous=current,
             )
         return True
+
+    async def advance_error(self, current: str, new_state: str) -> Optional[str]:
+        """Why ``current → new_state`` is not a legal move, or None."""
+        if error := transition_error(current, new_state):
+            return error
+        if current == "OFFSEASON" and new_state != current:
+            # A closed season must not be reopened into a new tournament.
+            season = await self.get_current_season()
+            if season is not None and season.ended_at is not None:
+                return (
+                    f"Season {season.number} is closed. "
+                    "Start the next one with `/season create`."
+                )
+        return None
 
     async def get_state(self) -> str:
         """Get the current season state."""

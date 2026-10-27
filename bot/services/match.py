@@ -1144,8 +1144,12 @@ class MatchService:
         """Unplayed matches of ``season`` where both players are known.
 
         Each item has ``match_id``, the player's ``side``, a display ``label``,
-        and ``scheduled_at``.
+        and ``scheduled_at``. Closed or archived seasons have none.
         """
+        from bot.services.season import SeasonService
+
+        if not await SeasonService().is_active(season):
+            return []
         async with self.db.get_session() as session:
             stmt = (
                 select(Match)

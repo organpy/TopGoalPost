@@ -12,7 +12,7 @@ from bot.utils.errors import error_message, log_error
 from bot.cogs.checks import require_host, require_host_app
 from bot.services import audit
 from bot.services.health import BACKUP_RETENTION, backup_database, database_path
-from bot.services.season import SeasonService, STATE_ORDER, next_state, transition_error
+from bot.services.season import SeasonService, STATE_ORDER, next_state
 from bot.db import get_db_manager, PlayerSeason, SeasonStatus
 from bot.config import Config
 from bot.utils.announce import announce, announce_stage, refresh_presence
@@ -93,7 +93,7 @@ class SeasonAdminCog(commands.Cog):
         """Apply a state change and describe the result (shared by prefix/slash)."""
         target = state.upper()
         current = await self.season_service.get_state()
-        error = transition_error(current, target)
+        error = await self.season_service.advance_error(current, target)
         if error and (not force or target not in STATE_ORDER):
             return error
 

@@ -2439,6 +2439,39 @@ class TestSeasonClose:
         assert await svc.create_season(2) is True
 
 
+    async def test_closed_season_is_read_only(self, db):
+        from sqlalchemy import select
+        from bot.services.match import MatchService
+        from bot.services.season import SeasonService
+
+        await _playoff_season(db, gf_wins=2)
+        svc = SeasonService()
+        await svc.close_season(1)
+
+        assert await svc.is_active(1) is False
+        assert "closed" in await svc.require_active(1)
+        async with db.get_session() as session:
+            match = (await session.execute(select(Match))).scalars().first()
+            champ = (await session.execute(select(MatchPlayer).where(
+                MatchPlayer.match_id == match.id, MatchPlayer.side == 0
+            ))).scalars().first()
+        ms = MatchService()
+        assert "error" in await ms.report_score(match.id, 0, 3, 1)
+        assert await ms.active_matches_for_player(champ.player_id, 1) == []
+
+    async def test_closed_season_cannot_be_reopened(self, db):
+        from bot.services.season import SeasonService
+
+        await _playoff_season(db, gf_wins=2)
+        svc = SeasonService()
+        await svc.close_season(1)
+
+        assert "closed" in await svc.advance_error("OFFSEASON", "SIGNUP")
+        assert await svc.advance_state("SIGNUP") is False
+        assert await svc.get_state() == "OFFSEASON"
+        assert await svc.create_season(2) is True
+        assert await svc.advance_state("SIGNUP") is True
+
 class TestEventUniqueness:
     async def test_duplicate_insert_fails(self, db):
         import pytest
