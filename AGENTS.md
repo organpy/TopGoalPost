@@ -4,8 +4,6 @@ A Discord bot that runs a seasonal 1v1 tournament: Signup → Open → Playin �
 Swiss → Playoff. Python 3.12, discord.py 2.x, async SQLAlchemy on SQLite,
 Pillow for rendered standings.
 
-Legacy code in `../BottomGoalPost/` is reference only. Never edit it.
-
 ## Repo map
 
 | Path | Role |
