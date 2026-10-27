@@ -744,18 +744,22 @@ def _draw_labels(
     def allowed(slot: str) -> bool:
         return allowed_slots is None or slot in allowed_slots
 
-    if any(allowed(slot) for slot in positions if slot.startswith("W-")):
-        d.text(
-            xy=(PLAYOFF_MARGIN, PLAYOFF_MARGIN + 4),
-            text="WINNERS BRACKET",
-            fill=PLAYOFF_LABEL_COLOR,
-            font=PLAYOFF_LABEL_FONT,
-            anchor="lm",
+    # Each bracket title sits above its first visible round label and
+    # shares its x, so it survives the per-view crop and lines up with it.
+    for prefix, title in (("W-", "WINNERS BRACKET"), ("L-", "LOSERS BRACKET")):
+        cols = sorted(
+            {
+                positions[slot][0]
+                for slot in positions
+                if slot.startswith(prefix) and allowed(slot)
+            }
         )
-    if any(allowed(slot) for slot in positions if slot.startswith("L-")):
+        if not cols:
+            continue
+        top = _column_label_top(prefix, cols[0], positions)
         d.text(
-            xy=(PLAYOFF_MARGIN, _PLAYOFF_L_TOP - 34),
-            text="LOSERS BRACKET",
+            xy=(PLAYOFF_MARGIN + cols[0] * PLAYOFF_COL_STEP + 6, top - 18 - 28),
+            text=title,
             fill=PLAYOFF_LABEL_COLOR,
             font=PLAYOFF_LABEL_FONT,
             anchor="lm",
@@ -844,7 +848,7 @@ async def get_playoff(view: str = "full", season: int | None = None):
         table_hash = hashlib.sha3_256(
             bytes(
                 repr(_match_signature(matches))
-                + f"playoff_v14_{view}_{season}",
+                + f"playoff_v15_{view}_{season}",
                 "utf-8",
             )
         ).hexdigest()
@@ -944,7 +948,7 @@ async def get_playoff(view: str = "full", season: int | None = None):
                 col, top = positions[slot]
                 left = PLAYOFF_MARGIN + col * PLAYOFF_COL_STEP
                 xs.extend((left, left + PLAYOFF_BOX_W))
-                ys.extend((top - 34, top + PLAYOFF_BOX_H))
+                ys.extend((top - 60, top + PLAYOFF_BOX_H))
             if champion and view == "winners":
                 _, banner_top, _, banner_bottom = _champion_banner_rect(positions)
                 ys.extend((banner_top, banner_bottom))
