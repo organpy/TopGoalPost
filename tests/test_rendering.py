@@ -224,12 +224,15 @@ def test_winners_losers_feed_enters_second_gf_row_from_below():
     assert feed_x < reset_left
 
 
-def test_playoff_champion_banner_is_top_right_and_draws_gold():
+def test_playoff_champion_banner_sits_above_grand_final_and_draws_gold():
+    for positions in (PLAYOFF_SLOT_POS, _winners_positions()):
+        col, gf_top = positions["GF-M1"]
+        left, top, right, bottom = _champion_banner_rect(positions)
+        assert left == PLAYOFF_MARGIN + col * PLAYOFF_COL_STEP
+        assert right - left == PLAYOFF_BOX_W
+        assert 0 < top and bottom < gf_top - 24  # clear of the GRAND FINAL label
+
     left, top, right, bottom = _champion_banner_rect()
-    assert top == PLAYOFF_MARGIN
-    assert right == PLAYOFF_LAYOUT_W - PLAYOFF_MARGIN
-    assert left > PLAYOFF_LAYOUT_W / 2
-    assert bottom < PLAYOFF_SLOT_POS["GF-M1"][1]
 
     img = Image.new(
         "RGBA", (PLAYOFF_LAYOUT_W, PLAYOFF_LAYOUT_H), (0, 0, 0, 0)

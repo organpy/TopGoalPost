@@ -71,7 +71,12 @@ PLAYOFF_FEEDER_FONT = ImageFont.truetype(
 PLAYOFF_CHAMPION_FONT = ImageFont.truetype(
     font=asset_path("fonts", "Agdasima-Regular.ttf"), size=34
 )
+PLAYOFF_CHAMPION_LABEL_FONT = ImageFont.truetype(
+    font=asset_path("fonts", "Agdasima-Regular.ttf"), size=26
+)
 PLAYOFF_CHAMPION_PFP = 56
+PLAYOFF_CHAMPION_H = 116
+PLAYOFF_CHAMPION_BG = (58, 50, 30)
 
 
 def _round_number(slot: str) -> int:
@@ -207,41 +212,54 @@ def _playoff_placeholder_x(left: float) -> float:
 
 
 def _champion_banner_rect(
-    right: float | None = None,
+    positions: dict[str, tuple[int, int]] | None = None,
 ) -> tuple[float, float, float, float]:
-    """Top-right champion banner, above the grand-final column."""
-    right = right if right is not None else PLAYOFF_LAYOUT_W - PLAYOFF_MARGIN
-    left = right - (
-        PLAYOFF_BOX_W + (PLAYOFF_RIGHT_MARGIN - PLAYOFF_MARGIN)
-    )
-    top = PLAYOFF_MARGIN
-    return left, top, right, top + 92
+    """Champion banner sitting directly above the GRAND FINAL label."""
+    positions = positions or PLAYOFF_SLOT_POS
+    col, gf_top = positions["GF-M1"]
+    left = PLAYOFF_MARGIN + col * PLAYOFF_COL_STEP
+    bottom = gf_top - 48
+    return left, bottom - PLAYOFF_CHAMPION_H, left + PLAYOFF_BOX_W, bottom
 
 
 def _draw_champion_banner(
     img: Image.Image,
     d: ImageDraw.ImageDraw,
     champion: tuple[int, str, str | None],
-    right: float | None = None,
+    positions: dict[str, tuple[int, int]] | None = None,
 ) -> None:
     champion_id, name, country = champion
-    left, top, right, _bottom = _champion_banner_rect(right)
+    left, top, right, bottom = _champion_banner_rect(positions)
     d.rounded_rectangle(
-        (left, top, right, top + 92),
+        (left, top, right, bottom),
         radius=10,
+        fill=PLAYOFF_CHAMPION_BG,
         outline=PLAYOFF_CHAMPION_COLOR,
-        width=2,
+        width=3,
     )
+    center_x = (left + right) / 2
     d.text(
-        xy=(left + 10, top + 8),
+        xy=(center_x, top + 20),
         text="CHAMPION",
         fill=PLAYOFF_CHAMPION_COLOR,
-        font=PLAYOFF_LABEL_FONT,
-        anchor="la",
+        font=PLAYOFF_CHAMPION_LABEL_FONT,
+        anchor="mm",
+    )
+    d.line(
+        (left + 24, top + 38, right - 24, top + 38),
+        fill=PLAYOFF_CHAMPION_COLOR,
+        width=1,
     )
 
-    pfp_left = left + 10
-    pfp_top = top + 30
+    # pfp, flag and name are centered as one group under the label.
+    row_mid = (top + 38 + bottom) / 2
+    flag_w = PLAYOFF_FLAG_W + 10 if country else 0
+    max_name_w = (right - left) - 40 - PLAYOFF_CHAMPION_PFP - 10 - flag_w
+    name = _fit_name(name, max(40, max_name_w), PLAYOFF_CHAMPION_FONT)
+    name_w = d.textlength(name, font=PLAYOFF_CHAMPION_FONT)
+    group_w = PLAYOFF_CHAMPION_PFP + 10 + flag_w + name_w
+    pfp_left = center_x - group_w / 2
+    pfp_top = row_mid - PLAYOFF_CHAMPION_PFP / 2
     try:
         pfp = Image.open(
             fp=asset_path("pfps", f"{champion_id}.png")
@@ -264,29 +282,24 @@ def _draw_champion_banner(
             mask=mask.resize((PLAYOFF_CHAMPION_PFP, PLAYOFF_CHAMPION_PFP)),
         )
 
-    flag_left = pfp_left + PLAYOFF_CHAMPION_PFP + 8
+    name_left = pfp_left + PLAYOFF_CHAMPION_PFP + 10
     if country:
         try:
             flag = get_flag(country)
             img.paste(
                 im=flag,
                 box=(
-                    int(flag_left + (PLAYOFF_FLAG_W - flag.width) / 2),
-                    int(pfp_top + (PLAYOFF_CHAMPION_PFP - flag.height) / 2),
+                    int(name_left + (PLAYOFF_FLAG_W - flag.width) / 2),
+                    int(row_mid - flag.height / 2),
                 ),
                 mask=flag,
             )
         except Exception:
             pass
-
-    name_left = flag_left + PLAYOFF_FLAG_W + 10
+        name_left += flag_w
     d.text(
-        xy=(name_left, pfp_top + PLAYOFF_CHAMPION_PFP / 2),
-        text=_fit_name(
-            name,
-            max(40, right - name_left - 10),
-            PLAYOFF_CHAMPION_FONT,
-        ),
+        xy=(name_left, row_mid),
+        text=name,
         fill=PLAYOFF_CHAMPION_COLOR,
         font=PLAYOFF_CHAMPION_FONT,
         anchor="lm",
@@ -724,7 +737,6 @@ def _draw_labels(
     show_grand_final: bool = True,
     champion: tuple[int, str, str | None] | None = None,
     positions: dict[str, tuple[int, int]] | None = None,
-    champion_right: float | None = None,
 ) -> None:
     positions = positions or PLAYOFF_SLOT_POS
 
@@ -790,9 +802,7 @@ def _draw_labels(
             + 6
         )
         if champion:
-            _draw_champion_banner(
-                img, d, champion, right=champion_right
-            )
+            _draw_champion_banner(img, d, champion, positions)
         d.text(
             xy=(gf_left, positions["GF-M1"][1] - 24),
             text="GRAND FINAL",
@@ -833,7 +843,7 @@ async def get_playoff(view: str = "full", season: int | None = None):
         table_hash = hashlib.sha3_256(
             bytes(
                 repr(_match_signature(matches))
-                + f"playoff_v12_{view}_{season}",
+                + f"playoff_v13_{view}_{season}",
                 "utf-8",
             )
         ).hexdigest()
@@ -855,17 +865,6 @@ async def get_playoff(view: str = "full", season: int | None = None):
     else:
         allowed_slots = set(PLAYOFF_SLOT_POS)
         positions = PLAYOFF_SLOT_POS
-
-    champion_right = (
-        PLAYOFF_LAYOUT_W - PLAYOFF_MARGIN
-        if view == "full"
-        else max(
-            PLAYOFF_MARGIN
-            + positions[slot][0] * PLAYOFF_COL_STEP
-            + PLAYOFF_BOX_W
-            for slot in allowed_slots
-        )
-    )
 
     row_by_id = {
         int(match[9][2:]): match
@@ -929,7 +928,6 @@ async def get_playoff(view: str = "full", season: int | None = None):
             show_grand_final=(view in ("full", "winners")),
             champion=champion if view in ("full", "winners") else None,
             positions=positions,
-            champion_right=champion_right,
         )
         if view == "winners":
             _draw_losers_feed_label(img, positions, feed_bottom)
@@ -943,9 +941,7 @@ async def get_playoff(view: str = "full", season: int | None = None):
                 xs.extend((left, left + PLAYOFF_BOX_W))
                 ys.extend((top - 34, top + PLAYOFF_BOX_H))
             if champion and view == "winners":
-                _, banner_top, _, banner_bottom = _champion_banner_rect(
-                    champion_right
-                )
+                _, banner_top, _, banner_bottom = _champion_banner_rect(positions)
                 ys.extend((banner_top, banner_bottom))
             if xs and ys:
                 pad = 48
