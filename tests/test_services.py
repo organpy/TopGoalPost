@@ -2472,6 +2472,26 @@ class TestSeasonClose:
         assert await svc.create_season(2) is True
         assert await svc.advance_state("SIGNUP") is True
 
+    async def test_playoff_readiness_needs_a_decided_final(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        async with db.get_session() as session:
+            session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+            await session.commit()
+        await Config().set_season_state("PLAYOFF")
+        flow = TournamentFlowService()
+        empty = await flow.readiness(1)
+        assert empty["ready"] is False and empty["blockers"]
+
+    async def test_playoff_readiness_after_grand_final(self, db):
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await _playoff_season(db, gf_wins=2)
+        status = await TournamentFlowService().get_status()
+        assert status["readiness"]["ready"] is True
+        assert "/season close" in status["next_action"]
+
 class TestEventUniqueness:
     async def test_duplicate_insert_fails(self, db):
         import pytest

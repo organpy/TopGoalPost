@@ -16,6 +16,7 @@ from bot.db import (
     MatchRepository,
 )
 from bot.services.season import SeasonService, next_state
+from bot.services.season_results import get_season_result
 from bot.services.match import MatchService
 from bot.services.playin import PlayinService
 from bot.services.pairing import PairingService
@@ -82,14 +83,16 @@ class TournamentFlowService:
         playin_rounds = await self._playin_round_counts(season)
         playin_started = await self._event_exists(season, EventType.PLAYIN)
 
+        readiness = await self.readiness(season)
         next_action = self._recommend_next(
-            state, stage_counts, layout, playin_rounds, playin_started
+            state, stage_counts, layout, playin_rounds, playin_started,
+            ready=readiness["ready"],
         )
 
         return {
             "season": season,
             "state": state,
-            "readiness": await self.readiness(season),
+            "readiness": readiness,
             "stages": stage_counts,
             "playin_layout": layout,
             "playin_cut_notice": cut_notice(layout),
@@ -127,8 +130,16 @@ class TournamentFlowService:
         elif state == "PLAYOFF":
             action = "close_season"
             counts = await self._event_match_counts(season, EventType.PLAYOFF)
-            if counts["unplayed"]:
+            if counts["total"] == 0:
+                blockers.append("No PLAYOFF matches generated yet.")
+            elif counts["unplayed"]:
                 blockers.append(f"{counts['unplayed']} playoff match(es) unplayed.")
+            else:
+                # Same rule `/season close` applies: the grand final decides it.
+                async with self.db.get_session() as session:
+                    result = await get_season_result(session, season)
+                if result.champion is None:
+                    blockers.append("The grand final is not decided yet.")
         return {
             "state": state,
             "next_state": next_state(state),
@@ -422,6 +433,7 @@ class TournamentFlowService:
         layout: dict,
         playin_rounds: dict[int, dict[str, int]],
         playin_started: bool = False,
+        ready: bool = False,
     ) -> str:
         if state == "OFFSEASON":
             return "Advance to SIGNUP: `/season advance SIGNUP` or dashboard **▶ SIGNUP**."
@@ -475,7 +487,11 @@ class TournamentFlowService:
             return "Generate playoffs: `/tourney generate_playoffs`."
         if state == "PLAYOFF":
             p = stages.get("PLAYOFF", {})
+            if p.get("total", 0) == 0:
+                return "Generate playoffs: `/tourney generate_playoffs`."
             if p.get("unplayed", 0) > 0:
                 return f"Score playoffs ({p['unplayed']} unplayed). View: `/playoff`."
-            return "Season complete — `/season create <N+1>` for next season."
+            if not ready:
+                return "The grand final is not decided yet. View: `/playoff`."
+            return "Grand final decided — close it with `/season close`."
         return "Check `/tourney status`."
