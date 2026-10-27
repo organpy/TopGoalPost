@@ -639,7 +639,23 @@ class TestStatsCog:
         fields = {field.name: field.value for field in embed.fields}
         assert fields["Open"] == "2-0 · GD +7"
         assert "Skipped Open" not in fields["Open"]
-        assert "8" in fields["Totals"]
+        assert fields["Record"] == "**2-0**"
+        assert fields["Goals"] == "**8-1** (+7)"
+        assert fields["Form"] == "🟩🟩"
+        assert "vs Rival" in fields["Recent matches"]
+
+        # Profile and history share one message: History is a tab.
+        view = mock_interaction.followup.send.call_args.kwargs["view"]
+        assert view.tab == "profile"
+        assert view.history[0].title == "Match history · ProfileTester"
+        assert "2-0 in 2 matches" in view.history[0].footer.text
+
+        mock_interaction.followup.send.reset_mock()
+        await cog.history_cmd.callback(cog, mock_interaction)
+        kwargs = mock_interaction.followup.send.call_args.kwargs
+        assert kwargs["embed"].title == "Match history · ProfileTester"
+        assert kwargs["view"].tab == "history"
+        assert kwargs["view"].profile.title == "ProfileTester"
 
     async def test_season_summary_command_renders_image(
         self, mock_interaction, mock_bot, tmp_path

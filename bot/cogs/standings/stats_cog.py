@@ -9,7 +9,7 @@ import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
-from discord.ui import Button, View
+from discord.ui import Button
 
 from bot.rendering import asset_path
 from bot.rendering.playercard import render_player_card
@@ -20,47 +20,127 @@ from bot.services.season import SeasonService
 from bot.services.season_summary import SeasonSummaryService
 from bot.db import get_db_manager, PlayerRepository
 from bot.ui.autocomplete import season_autocomplete, username_autocomplete
+from bot.utils.countries import COUNTRIES
+from bot.utils.errors import ReportingView
 
 CHAMPION_COLOR = discord.Color.from_rgb(245, 196, 70)
-
-
+PROFILE_COLOR = discord.Color.from_rgb(29, 89, 212)
+COUNTRY_NAMES = {code.upper(): name for name, code in COUNTRIES.items()}
+STAGE_LABELS = {"OPEN": "Open", "PLAYIN": "Play-in", "SWISS": "Swiss", "PLAYOFF": "Playoff"}
+RECENT_MATCHES = 5
+HISTORY_PER_PAGE = 8
 
 # Rendering images is expensive; one card/summary per user per window.
 IMAGE_COOLDOWN_SECONDS = 20.0
 
-class HistoryView(View):
-    def __init__(self, pages: list[str], author_id: int):
-        super().__init__(timeout=60)
-        self.pages = pages
+def _result_line(match: dict) -> str:
+    """One history row: result square, score, opponent, where it was played."""
+    icon = "🟩" if match["won"] else "🟥"
+    where = STAGE_LABELS.get(match["stage"], match["stage"].title())
+    if match["slot"]:
+        where += f" {match['slot']}"
+        if match["series_game"]:
+            where += f" G{match['series_game']}"
+    return (
+        f"{icon} **{match['my_score']}–{match['opp_score']}** vs {match['opponent']}"
+        f" · {where} `#{match['match_id']}`"
+    )
+
+
+def _form(matches: list[dict]) -> str:
+    """Last few results, oldest first so it reads left to right."""
+    recent = matches[:RECENT_MATCHES]
+    return "".join("🟩" if m["won"] else "🟥" for m in reversed(recent))
+
+
+def _history_pages(name: str, season: int, matches: list[dict]) -> list[discord.Embed]:
+    wins = sum(1 for m in matches if m["won"])
+    pages = []
+    total = (len(matches) - 1) // HISTORY_PER_PAGE + 1
+    for index in range(0, len(matches), HISTORY_PER_PAGE):
+        chunk = matches[index:index + HISTORY_PER_PAGE]
+        embed = discord.Embed(
+            title=f"Match history · {name}",
+            description="\n".join(_result_line(m) for m in chunk),
+            color=PROFILE_COLOR,
+        )
+        embed.set_footer(
+            text=(
+                f"Season {season} · {wins}-{len(matches) - wins} in {len(matches)} matches"
+                f" · Page {index // HISTORY_PER_PAGE + 1}/{total}"
+            )
+        )
+        pages.append(embed)
+    return pages
+
+
+class ProfileView(ReportingView):
+    """Profile and match-history tabs on one message, history paginated."""
+
+    def __init__(
+        self,
+        author_id: int,
+        profile: discord.Embed | None,
+        history: list[discord.Embed],
+        start_on_history: bool = False,
+    ):
+        super().__init__(timeout=180)
         self.author_id = author_id
-        self.current = 0
-        self._update_buttons()
+        self.profile = profile
+        self.history = history
+        self.tab = "history" if start_on_history or profile is None else "profile"
+        self.page = 0
+        if profile is None:
+            self.remove_item(self.profile_btn)
+        if not history:
+            self.remove_item(self.history_btn)
+        if len(history) <= 1:
+            self.remove_item(self.prev_btn)
+            self.remove_item(self.next_btn)
+        self._sync()
 
-    def _update_buttons(self):
-        self.prev_btn.disabled = self.current <= 0
-        self.next_btn.disabled = self.current >= len(self.pages) - 1
+    @property
+    def needed(self) -> bool:
+        """A view is only worth sending when there is something to switch to."""
+        return len(self.children) > 1 or len(self.history) > 1
 
-    @discord.ui.button(label="◀", style=discord.ButtonStyle.grey)
+    def current(self) -> discord.Embed:
+        return self.history[self.page] if self.tab == "history" else self.profile
+
+    def _sync(self) -> None:
+        on_history = self.tab == "history"
+        self.profile_btn.disabled = not on_history
+        self.history_btn.disabled = on_history
+        self.prev_btn.disabled = not on_history or self.page <= 0
+        self.next_btn.disabled = not on_history or self.page >= len(self.history) - 1
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        await super().interaction_check(interaction)
+        return interaction.user.id == self.author_id
+
+    async def _show(self, interaction: discord.Interaction) -> None:
+        self._sync()
+        await interaction.response.edit_message(embed=self.current(), view=self)
+
+    @discord.ui.button(label="Profile", emoji="👤", style=discord.ButtonStyle.primary)
+    async def profile_btn(self, interaction: discord.Interaction, button: Button):
+        self.tab = "profile"
+        await self._show(interaction)
+
+    @discord.ui.button(label="History", emoji="📜", style=discord.ButtonStyle.secondary)
+    async def history_btn(self, interaction: discord.Interaction, button: Button):
+        self.tab = "history"
+        await self._show(interaction)
+
+    @discord.ui.button(emoji="◀", style=discord.ButtonStyle.grey)
     async def prev_btn(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.author_id:
-            return
-        self.current = max(0, self.current - 1)
-        self._update_buttons()
-        await interaction.response.edit_message(
-            content=self.pages[self.current],
-            view=self,
-        )
+        self.page = max(0, self.page - 1)
+        await self._show(interaction)
 
-    @discord.ui.button(label="▶", style=discord.ButtonStyle.grey)
+    @discord.ui.button(emoji="▶", style=discord.ButtonStyle.grey)
     async def next_btn(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.author_id:
-            return
-        self.current = min(len(self.pages) - 1, self.current + 1)
-        self._update_buttons()
-        await interaction.response.edit_message(
-            content=self.pages[self.current],
-            view=self,
-        )
+        self.page = min(len(self.history) - 1, self.page + 1)
+        await self._show(interaction)
 
 
 class StatsCog(commands.Cog):
@@ -138,30 +218,57 @@ class StatsCog(commands.Cog):
             text += " · Champion"
         return text
 
-    def _profile_embed(self, stats: PlayerStats) -> discord.Embed:
+    def _avatar_url(self, guild, discord_id: int) -> str | None:
+        member = guild.get_member(discord_id) if guild else None
+        return member.display_avatar.url if member else None
+
+    def _profile_embed(
+        self,
+        stats: PlayerStats,
+        matches: list[dict] | None = None,
+        avatar_url: str | None = None,
+    ) -> discord.Embed:
+        matches = matches or []
+        lines = []
+        if stats.champion:
+            lines.append(f"🏆 **Season {stats.season} Champion**")
+        where = []
+        if stats.country:
+            code = stats.country.upper()
+            where.append(f":flag_{code.lower()}: {COUNTRY_NAMES.get(code, code)}")
+        where.append(f"Season {stats.season}")
+        where.append("🟢 Active" if stats.season_active else "⚪ Archived")
+        lines.append(" · ".join(where))
+        if stats.championship_seasons:
+            seasons = " · ".join(f"S{n}" for n in stats.championship_seasons)
+            titles = "title" if stats.circuits_won == 1 else "titles"
+            lines.append(f"🎖️ **{stats.circuits_won}** career {titles} ({seasons})")
+
         embed = discord.Embed(
             title=stats.name,
-            description=(
-                f"Season {stats.season} · "
-                f"{'Active' if stats.season_active else 'Archived'}"
-            ),
-            color=CHAMPION_COLOR if stats.champion else discord.Color.green(),
+            description="\n".join(lines),
+            color=CHAMPION_COLOR if stats.champion else PROFILE_COLOR,
         )
-        if stats.country:
-            embed.add_field(
-                name="Country",
-                value=f":flag_{stats.country.lower()}: {stats.country.upper()}",
-                inline=True,
-            )
-        if stats.hp is not None:
-            embed.add_field(name="HP", value=str(stats.hp), inline=True)
+        if avatar_url:
+            embed.set_thumbnail(url=avatar_url)
 
-        embed.add_field(name="Open", value=stats.open_summary, inline=False)
+        total = stats.total
+        embed.add_field(name="Record", value=f"**{total.wins}-{total.losses}**", inline=True)
+        embed.add_field(name="Win rate", value=f"**{total.win_rate:.0%}**", inline=True)
+        embed.add_field(
+            name="Goals",
+            value=f"**{total.goals_for}-{total.goals_against}** ({total.goal_diff:+d})",
+            inline=True,
+        )
+
+        embed.add_field(name="Open", value=stats.open_summary, inline=True)
         embed.add_field(
             name="Playin",
             value=self._stage_line(stats, "PLAYIN", stats.playin),
             inline=True,
         )
+        if stats.hp is not None:
+            embed.add_field(name="HP", value=str(stats.hp), inline=True)
         embed.add_field(
             name="Swiss",
             value=self._stage_line(stats, "SWISS", stats.swiss),
@@ -173,19 +280,32 @@ class StatsCog(commands.Cog):
             inline=True,
         )
 
-        total = stats.total
-        embed.add_field(
-            name="Totals",
-            value=(
-                f"**Games:** {total.games} · **W-L:** {total.wins}-{total.losses}\n"
-                f"**Goals:** {total.goals_for}-{total.goals_against} · "
-                f"**GD:** {total.goal_diff:+d} · "
-                f"**Win rate:** {total.win_rate:.0%}"
-            ),
-            inline=False,
-        )
-        embed.set_footer(text="Use /playercard for the image version")
+        if matches:
+            embed.add_field(name="Form", value=_form(matches), inline=False)
+            embed.add_field(
+                name="Recent matches",
+                value="\n".join(_result_line(m) for m in matches[:RECENT_MATCHES]),
+                inline=False,
+            )
+        embed.set_footer(text="History tab for every match · /playercard for the image")
         return embed
+
+    async def _send_profile(
+        self, interaction, stats: PlayerStats, start_on_history: bool
+    ) -> None:
+        """Send the profile/history message; both tabs share one match query."""
+        matches = await self.match_service.get_match_history(stats.player_id, stats.season)
+        profile = None
+        if stats.has_data:
+            profile = self._profile_embed(
+                stats, matches, self._avatar_url(interaction.guild, stats.discord_id)
+            )
+        history = _history_pages(stats.name, stats.season, matches)
+        view = ProfileView(interaction.user.id, profile, history, start_on_history)
+        kwargs = {"embed": view.current(), "ephemeral": True}
+        if view.needed:
+            kwargs["view"] = view
+        await interaction.followup.send(**kwargs)
 
     # ── commands ──────────────────────────────────────────────
 
@@ -207,7 +327,7 @@ class StatsCog(commands.Cog):
         stats = await self._load_stats(interaction, username, season)
         if stats is None:
             return
-        await interaction.followup.send(embed=self._profile_embed(stats), ephemeral=True)
+        await self._send_profile(interaction, stats, start_on_history=False)
 
     @app_commands.command(name="playercard", description="Render a player card image")
     @app_commands.checks.cooldown(1, IMAGE_COOLDOWN_SECONDS, key=lambda i: i.user.id)
@@ -315,7 +435,6 @@ class StatsCog(commands.Cog):
         player, season_num = resolved
 
         matches = await self.match_service.get_match_history(player.id, season_num)
-
         if not matches:
             await interaction.followup.send(
                 f"{player.name} has no completed matches in Season {season_num}.",
@@ -323,25 +442,8 @@ class StatsCog(commands.Cog):
             )
             return
 
-        lines = []
-        for m in matches:
-            icon = "✅" if m["won"] else "❌"
-            slot_str = f" [{m['slot']} G{m['series_game']}]" if m["slot"] else ""
-            lines.append(
-                f"{icon} `#{m['match_id']}` {m['stage']}{slot_str} — "
-                f"**{m['my_score']}** - {m['opp_score']} vs {m['opponent']}"
-            )
-
-        per_page = 10
-        pages = []
-        for i in range(0, len(lines), per_page):
-            chunk = lines[i:i + per_page]
-            header = f"**Match History for {player.name}** (Season {season_num})\n"
-            header += f"Page {i // per_page + 1}/{(len(lines) - 1) // per_page + 1}\n\n"
-            pages.append(header + "\n".join(chunk))
-
-        view = HistoryView(pages, interaction.user.id) if len(pages) > 1 else None
-        await interaction.followup.send(content=pages[0], view=view, ephemeral=True)
+        stats = await self.stats_service.get_stats(player.id, season_num)
+        await self._send_profile(interaction, stats, start_on_history=True)
 
     @app_commands.command(name="seasons", description="List seasons and their champions")
     async def seasons_cmd(self, interaction: discord.Interaction):
