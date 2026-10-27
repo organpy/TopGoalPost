@@ -2460,3 +2460,69 @@ class TestEventUniqueness:
         async with db.get_session() as session:
             event = await Repo(session).get_or_create(EventType.OPEN, 1, "Open")
         assert event.id == first.id
+
+
+class TestGrandFinalResetCleanup:
+    @staticmethod
+    async def _bracket(db, seed_data):
+        """L-R6-M1 decided, GF-M1 won by the LB champ, GF-M2 already played."""
+        from datetime import datetime
+
+        a, b, c = seed_data["players"][:3]
+        async with db.get_session() as session:
+            event = await EventRepository(session).create("PO", EventType.PLAYOFF, 1)
+            ids = {}
+            for slot, (p0, p1), winner in (
+                ("L-R6-M1", (b, c), 1),
+                ("GF-M1", (a, c), 1),
+                ("GF-M2", (a, c), 1),
+            ):
+                match = Match(event_id=event.id, bracket_slot=slot, series_game=1,
+                              completed_at=datetime.utcnow())
+                session.add(match)
+                await session.flush()
+                session.add(MatchPlayer(match_id=match.id, side=0, player_id=p0.id,
+                                        goals=0, is_winner=winner == 0))
+                session.add(MatchPlayer(match_id=match.id, side=1, player_id=p1.id,
+                                        goals=2, is_winner=winner == 1))
+                ids[slot] = match.id
+            await session.commit()
+            return event.id, ids
+
+    @staticmethod
+    async def _slot_count(db, event_id, slot):
+        from sqlalchemy import func, select
+
+        async with db.get_session() as session:
+            return (await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.event_id == event_id, Match.bracket_slot == slot
+                )
+            )).scalar()
+
+    async def test_upstream_edit_deletes_bracket_reset(self, db, seed_data):
+        from bot.services.match import MatchService
+
+        event_id, ids = await self._bracket(db, seed_data)
+        async with db.get_session() as session:
+            feeder = await MatchRepository(session).get_by_id(ids["L-R6-M1"])
+        await MatchService()._reset_playoff_after_edit(feeder)
+
+        assert await self._slot_count(db, event_id, "GF-M2") == 0
+        async with db.get_session() as session:
+            gf1 = await MatchRepository(session).get_by_id(ids["GF-M1"])
+            assert gf1.completed_at is None
+
+    async def test_bracket_reset_creation_is_idempotent(self, db, seed_data):
+        from bot.services.match import MatchService
+
+        event_id, ids = await self._bracket(db, seed_data)
+        svc = MatchService()
+        async with db.get_session() as session:
+            gf1 = await MatchRepository(session).get_by_id(ids["GF-M1"])
+            lb_champ = next(mp.player_id for mp in gf1.match_players if mp.side == 1)
+            await svc._handle_gf_bracket_reset(session, event_id, lb_champ, [gf1])
+            await svc._handle_gf_bracket_reset(session, event_id, lb_champ, [gf1])
+            await session.commit()
+
+        assert await self._slot_count(db, event_id, "GF-M2") == 1

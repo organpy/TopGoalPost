@@ -465,7 +465,9 @@ class MatchService:
                 if target:
                     await clear_slot(session, target[0], target[1])
 
-            if slot == "GF-M1":
+            # Any change to GF-M1 (directly or via an upstream feeder) voids
+            # the bracket reset; it is recreated when GF-M1 is decided again.
+            if slot == "GF-M1" or "GF-M1" in cleared_slots:
                 gf2 = (
                     await session.execute(
                         select(Match).where(
@@ -655,6 +657,15 @@ class MatchService:
         gf_p1_id = gf_mps[0].player_id  # WB champ
         gf_p2_id = gf_mps[1].player_id  # LB champ
         if winner_id == gf_p2_id:
+            existing = (
+                await session.execute(
+                    select(Match.id).where(
+                        and_(Match.event_id == event_id, Match.bracket_slot == "GF-M2")
+                    )
+                )
+            ).first()
+            if existing:
+                return
             gf2_match = Match(
                 event_id=event_id,
                 p1_prereq_id=gf_last.p1_prereq_id,
