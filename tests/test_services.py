@@ -2315,8 +2315,12 @@ async def test_swiss_rescore_clears_and_refills_descendants(db):
     assert filled_after["SW-R2-L1"] == [p1_id]
 
 
-async def _playoff_season(db, gf_wins: int):
-    """Season 1 in PLAYOFF with ``gf_wins`` grand-final games won by Champ."""
+async def _playoff_season(db, gf_wins: int, winner_side: int = 0, pending_reset: bool = False):
+    """Season 1 in PLAYOFF with ``gf_wins`` grand-final games.
+
+    ``winner_side`` 0 is the winners-bracket champ; side 1 winning GF-M1 is
+    what triggers a GF-M2 bracket reset (added unplayed with ``pending_reset``).
+    """
     from datetime import datetime
     from bot.config import Config
     from bot.db import Player
@@ -2333,8 +2337,16 @@ async def _playoff_season(db, gf_wins: int):
                           completed_at=datetime.utcnow())
             session.add(match)
             await session.flush()
-            session.add(MatchPlayer(match_id=match.id, side=0, player_id=champ.id, goals=3, is_winner=True))
-            session.add(MatchPlayer(match_id=match.id, side=1, player_id=second.id, goals=1, is_winner=False))
+            session.add(MatchPlayer(match_id=match.id, side=0, player_id=champ.id,
+                                    goals=3, is_winner=winner_side == 0))
+            session.add(MatchPlayer(match_id=match.id, side=1, player_id=second.id,
+                                    goals=1, is_winner=winner_side == 1))
+        if pending_reset:
+            reset = Match(event_id=event.id, bracket_slot="GF-M2", series_game=1)
+            session.add(reset)
+            await session.flush()
+            session.add(MatchPlayer(match_id=reset.id, side=0, player_id=champ.id))
+            session.add(MatchPlayer(match_id=reset.id, side=1, player_id=second.id))
         await session.commit()
     await Config().set_season_state("PLAYOFF")
 
@@ -2347,6 +2359,19 @@ class TestSeasonClose:
         result = await SeasonService().close_season(1)
         assert result["error"] == "The grand final is not complete yet."
         assert await SeasonService().get_state() == "PLAYOFF"
+
+    async def test_pending_bracket_reset_blocks_close(self, db):
+        from bot.services.season import SeasonService
+        from bot.services.season_results import get_season_result
+
+        await _playoff_season(db, gf_wins=2, winner_side=1, pending_reset=True)
+        async with db.get_session() as session:
+            result = await get_season_result(session, 1)
+        assert result.champion is None and result.deciding_slot is None
+
+        closed = await SeasonService().close_season(1)
+        assert closed["error"] == "The grand final is not complete yet."
+        assert (await SeasonService().get_season(1)).champion_id is None
 
     async def test_close_records_champion(self, db):
         from bot.services.season import SeasonService

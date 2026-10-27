@@ -30,6 +30,11 @@ class SeasonResult:
 
 
 async def _grand_final_matches(session, season_number: int) -> list[Match]:
+    """All grand-final games, played or not.
+
+    Unplayed rows matter: a pending GF-M2 bracket reset means the season is
+    not decided yet, even though GF-M1 has a winner.
+    """
     stmt = (
         select(Match)
         .join(Event, Match.event_id == Event.id)
@@ -40,7 +45,6 @@ async def _grand_final_matches(session, season_number: int) -> list[Match]:
             Event.season == season_number,
             Event.type == EventType.PLAYOFF,
             Match.bracket_slot.in_(("GF-M1", "GF-M2")),
-            Match.completed_at.isnot(None),
         )
         .order_by(Match.id)
     )
@@ -62,6 +66,8 @@ def _deciding_winner(
             continue
         wins: dict[int, int] = {}
         for match in rows:
+            if match.completed_at is None:
+                continue
             winner = match.get_winner()
             if winner and winner.player_id is not None:
                 wins[winner.player_id] = wins.get(winner.player_id, 0) + 1
