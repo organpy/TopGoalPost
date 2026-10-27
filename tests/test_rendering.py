@@ -710,6 +710,7 @@ def test_player_card_champion_indicator_and_awards():
     from bot.rendering.playercard import (
         AWARDS_H,
         AWARDS_TOP,
+        FOOTER_Y,
         CARD_H,
         TABLE_HEADER_H,
         TABLE_ROW_H,
@@ -751,7 +752,7 @@ def test_player_card_champion_indicator_and_awards():
 
     table_bottom = TABLE_TOP + TABLE_HEADER_H + TABLE_ROW_H * 4
     assert AWARDS_TOP > table_bottom
-    assert AWARDS_TOP + AWARDS_H < CARD_H - 58
+    assert AWARDS_TOP + AWARDS_H < FOOTER_Y
 
 
 def test_season_summary_renders_podium_and_leaders(tmp_path):
