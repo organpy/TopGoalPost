@@ -37,8 +37,8 @@ From clone to running bot:
 <p><img src="repopng/TPGinstallation.png" alt="Installation" width="200"></p>
 
 ```bash
-git clone https://github.com/organpy/srtrt.git
-cd srtrt
+git clone https://github.com/organpy/TopGoalPost.git
+cd TopGoalPost
 cp .env.example .env             # edit DISCORD_TOKEN, SERVER_ID
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
