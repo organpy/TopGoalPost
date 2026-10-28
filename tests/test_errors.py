@@ -2,10 +2,12 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
 from discord import app_commands
 from discord.ext import commands
 
 from bot.utils.errors import (
+    PERMISSION_DENIAL_LIMITER,
     PERMISSION_MESSAGE,
     describe_app_command_error,
     error_message,
@@ -51,15 +53,24 @@ async def test_deferred_interaction_uses_followup():
 async def test_bot_handlers_reply(monkeypatch):
     import main
 
+    PERMISSION_DENIAL_LIMITER.reset()
     bot = main.TopGoalPostBot.__new__(main.TopGoalPostBot)
 
     ctx = MagicMock()
+    ctx.author = MagicMock()
+    ctx.author.id = 901
+    ctx.author.send = AsyncMock()
     ctx.send = AsyncMock()
     await bot.on_command_error(ctx, commands.CommandInvokeError(RuntimeError("boom")))
     assert "Error ID" in ctx.send.call_args[0][0]
 
     await bot.on_command_error(ctx, commands.CheckFailure())
-    ctx.send.assert_awaited_with(PERMISSION_MESSAGE)
+    ctx.author.send.assert_awaited_with(PERMISSION_MESSAGE)
+
+    # Repeated permission failures are silently ignored inside the cooldown.
+    ctx.author.send.reset_mock()
+    await bot.on_command_error(ctx, commands.CheckFailure())
+    ctx.author.send.assert_not_awaited()
 
     interaction = _interaction(done=True)
     interaction.command = None
@@ -67,3 +78,47 @@ async def test_bot_handlers_reply(monkeypatch):
         interaction, app_commands.CommandInvokeError(MagicMock(), RuntimeError("boom"))
     )
     assert "Error ID" in interaction.followup.send.call_args[0][0]
+
+
+async def test_app_permission_denial_is_ephemeral_and_rate_limited():
+    import main
+
+    PERMISSION_DENIAL_LIMITER.reset()
+    bot = main.TopGoalPostBot.__new__(main.TopGoalPostBot)
+
+    first = _interaction(done=False)
+    first.user = MagicMock()
+    first.user.id = 902
+    await bot.on_app_command_error(first, app_commands.CheckFailure())
+
+    first.response.send_message.assert_awaited_once()
+    assert first.response.send_message.call_args.kwargs["ephemeral"] is True
+    assert first.response.send_message.call_args.args[0] == PERMISSION_MESSAGE
+
+    second = _interaction(done=False)
+    second.user = MagicMock()
+    second.user.id = 902
+    second.response.defer = AsyncMock()
+    await bot.on_app_command_error(second, app_commands.CheckFailure())
+
+    second.response.send_message.assert_not_awaited()
+    second.response.defer.assert_awaited_once_with(ephemeral=True, thinking=False)
+
+
+async def test_prefix_permission_falls_back_to_public_when_dm_is_closed():
+    import main
+
+    PERMISSION_DENIAL_LIMITER.reset()
+    bot = main.TopGoalPostBot.__new__(main.TopGoalPostBot)
+
+    ctx = MagicMock()
+    ctx.author = MagicMock()
+    ctx.author.id = 903
+    ctx.author.send = AsyncMock(
+        side_effect=discord.HTTPException(MagicMock(status=403), "closed")
+    )
+    ctx.send = AsyncMock()
+
+    await bot.on_command_error(ctx, commands.CheckFailure())
+
+    ctx.send.assert_awaited_once_with(PERMISSION_MESSAGE, delete_after=10)
