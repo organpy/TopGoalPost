@@ -93,6 +93,14 @@ CONFIRMED_COLOR = discord.Color.from_rgb(46, 204, 113)
 CANCELLED_COLOR = discord.Color.from_rgb(231, 76, 60)
 EXPIRED_COLOR = discord.Color.from_rgb(149, 165, 166)
 
+OFFER_NEXT_STEPS = {
+    "confirmed": "Play the match, then report the score with `/report`.",
+    "cancelled": "Use `/offer_time` to propose another time.",
+    "expired": "Use `/offer_time` to send a fresh offer.",
+    "countered": "Waiting for the other player to respond.",
+    "limit": "Start a fresh offer with `/offer_time`.",
+}
+
 
 def _display_name(user) -> str:
     return (
@@ -212,6 +220,8 @@ def offer_result_embed(
     )
     if note:
         embed.add_field(name="Message", value=note, inline=False)
+    if next_step := OFFER_NEXT_STEPS.get(status):
+        embed.add_field(name="Next step", value=next_step, inline=False)
     embed.set_footer(text="TopGoalPost scheduling")
     return embed
 

@@ -15,7 +15,12 @@ from bot.services.health import BACKUP_RETENTION, backup_database, database_path
 from bot.services.season import SeasonService, STATE_ORDER, next_state
 from bot.db import get_db_manager, PlayerSeason, SeasonStatus
 from bot.config import Config
-from bot.utils.announce import announce, announce_stage, refresh_presence
+from bot.utils.announce import (
+    announce,
+    announce_stage,
+    refresh_presence,
+    season_close_embed,
+)
 
 
 STATE_CHOICES = [app_commands.Choice(name=state, value=state) for state in STATE_ORDER]
@@ -169,7 +174,14 @@ class SeasonAdminCog(commands.Cog):
         if result["runner_up"]:
             recap += f" · Runner-up: **{result['runner_up']}**"
         recap += ". Full recap: `/season_summary`."
-        await announce(self.bot, recap)
+        await announce(
+            self.bot,
+            embed=season_close_embed(
+                season=season,
+                champion=result["champion"],
+                runner_up=result["runner_up"],
+            ),
+        )
         await refresh_presence(self.bot)
         return recap + f"\nNext: `/season create {season + 1}`."
 
