@@ -3,6 +3,7 @@
 import discord
 
 from bot.utils.embeds import BLUE, card, season_track, subtext
+from bot.utils.emojis import get as emoji
 from bot.utils.errors import ReportingView
 
 from bot.config import Config
@@ -16,9 +17,9 @@ SIGNUPS_CLOSED = "Signups are closed — the season has already started."
 def signup_panel_embed(season: int | None = None) -> discord.Embed:
     """Public panel posted by ``!signupbutton``."""
     title = (
-        "📝 Signups are open"
+        f"{emoji('SIGNUP')} Signups are open"
         if season is None
-        else f"📝 Season {season} signups are open"
+        else f"{emoji('SIGNUP')} Season {season} signups are open"
     )
     embed = card(
         title,

@@ -164,7 +164,9 @@ class TopGoalPostBot(commands.Bot):
     async def on_ready(self):
         logger.info(f"Logged in as {self.user.name} (ID: {self.user.id})")
         from bot.utils.announce import refresh_presence
+        from bot.utils.emojis import bind
 
+        bind(self)
         await refresh_presence(self)
         logger.info("Bot is ready!")
 

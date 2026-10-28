@@ -5,6 +5,7 @@ import discord
 
 from bot.config import Config
 from bot.services.season import next_state
+from bot.utils.emojis import get as emoji
 from bot.utils.embeds import (
     BLUE,
     GOLD,
@@ -29,7 +30,8 @@ STAGE_LABELS = {
 
 STAGE_ANNOUNCEMENTS = {
     "SIGNUP": {
-        "title": "📝 Signups are open",
+        "title": "Signups are open",
+        "emoji": "SIGNUP",
         "description": (
             "A brand-new **PBLC** season is on the way, and we'd love to have "
             "you in it. Grab your spot before the bracket locks!"
@@ -43,7 +45,8 @@ STAGE_ANNOUNCEMENTS = {
         "tip": "Setting your timezone early makes scheduling much easier for everyone.",
     },
     "OPEN": {
-        "title": "🎲 The Open stage is live",
+        "title": "The Open stage is live",
+        "emoji": "OPEN",
         "description": (
             "Signups are closed and the first matches are out. Everyone gets "
             "**four games** to show what they've got. Good luck!"
@@ -57,7 +60,8 @@ STAGE_ANNOUNCEMENTS = {
         "tip": "Not sure when your opponent is free? `/check_times` shows the overlap.",
     },
     "PLAYIN": {
-        "title": "⚔️ Playins are live",
+        "title": "Playins are live",
+        "emoji": "PLAYINS",
         "description": (
             "The Open stage is done, and now it's the climb. Win your playin "
             "matches to earn a place in **Swiss**."
@@ -71,7 +75,8 @@ STAGE_ANNOUNCEMENTS = {
         "tip": "New rounds open up on their own as soon as the current one wraps.",
     },
     "SWISS": {
-        "title": "🇨🇭 Swiss is live",
+        "title": "Swiss is live",
+        "emoji": "SWISS",
         "description": (
             "Thirty-two players remain. Each round pairs you with someone on "
             "the same record, so every game counts."
@@ -85,7 +90,8 @@ STAGE_ANNOUNCEMENTS = {
         "tip": "Look at the bracket after each round to find your next opponent.",
     },
     "PLAYOFF": {
-        "title": "🏆 Playoffs are live",
+        "title": "Playoffs are live",
+        "emoji": "PLAYOFFS",
         "description": (
             "This is it. The double-elimination bracket is set and only one "
             "player walks away with the title."
@@ -109,12 +115,12 @@ def stage_announcement_embed(state: str) -> discord.Embed | None:
         return None
 
     embed = card(
-        meta["title"],
+        f"{emoji(meta['emoji'])} {meta['title']}",
         f"{meta['description']}\n\n{subtext(season_track(state))}",
         color=meta["color"],
         section="Season stage update",
     )
-    embed.set_author(name=f"{STAGE_LABELS[state]} stage")
+    embed.set_author(name=f"{emoji('PBLC')} {STAGE_LABELS[state]} stage")
     for name, value in meta["actions"]:
         embed.add_field(name=name, value=value, inline=True)
     embed.add_field(name="💡 Good to know", value=meta["tip"], inline=False)
@@ -131,14 +137,14 @@ def season_close_embed(
     *, season: int, champion: str, runner_up: str | None = None
 ) -> discord.Embed:
     """Build the public season-over card."""
-    lines = [f"# 👑 {champion}", f"is the **Season {season}** champion! 🎉"]
+    lines = [f"# {emoji('CHAMPION')} {champion}", f"is the **Season {season}** champion! 🎉"]
     if runner_up:
         lines.append(f"\n🥈 Runner-up: **{runner_up}**, what a run to the final.")
     lines.append(
         "\nThanks to everyone who played. You made this season what it was."
     )
     embed = card(
-        f"🏆 Season {season} is over",
+        f"{emoji('PLAYOFFS')} Season {season} is over",
         "\n".join(lines),
         color=GOLD,
         section="Season recap",
