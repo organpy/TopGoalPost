@@ -12,6 +12,35 @@ from bot.services.signup import SignupService
 SIGNUPS_CLOSED = "Signups are closed — the season has already started."
 
 
+def signup_panel_embed(season: int | None = None) -> discord.Embed:
+    """Public panel posted by ``!signupbutton``."""
+    title = (
+        "📝 Signups are open"
+        if season is None
+        else f"📝 Season {season} signups are open"
+    )
+    embed = discord.Embed(
+        title=title,
+        description="Click **Sign up** below to join the tournament.",
+        color=discord.Color.from_rgb(52, 152, 219),
+    )
+    embed.add_field(
+        name="Before you play",
+        value=(
+            "Set your timezone with `/set_timezone` and add availability with "
+            "`/add_timeslot` or `/add_date_timeslot`."
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Already registered?",
+        value="Use `/editname` or `/editcountry` to update your entry.",
+        inline=False,
+    )
+    embed.set_footer(text="TopGoalPost · Player signup")
+    return embed
+
+
 async def signups_open() -> bool:
     """True while the current season is still in the SIGNUP state."""
     season_service = SeasonService()

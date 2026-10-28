@@ -196,13 +196,14 @@ class AdminCog(commands.Cog):
     @commands.command(name="signupbutton", hidden=True, help="Post the persistent signup button")
     @require_host()
     async def signupbutton_cmd(self, ctx: commands.Context):
-        from bot.ui.signup_button import SignupView
+        from bot.ui.signup_button import SignupView, signup_panel_embed
 
         if await self.season_service.get_state() != "SIGNUP":
             await ctx.send("Signups are closed — the season has already started.")
             return
 
-        await ctx.send(view=SignupView())
+        season = await self.season_service.get_current_season_number()
+        await ctx.send(embed=signup_panel_embed(season), view=SignupView())
         try:
             await ctx.message.delete()
         except discord.HTTPException:

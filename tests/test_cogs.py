@@ -1496,6 +1496,17 @@ class TestPlayerAdmin:
         cog.match_service.forfeit_all_player_matches.assert_not_awaited()
         assert "Cancelled" in self._sent(mock_interaction)
 
+def test_signup_panel_embed_has_season_and_instructions():
+    from bot.ui.signup_button import signup_panel_embed
+
+    embed = signup_panel_embed(4)
+    fields = {field.name: field.value for field in embed.fields}
+
+    assert "Season 4" in embed.title
+    assert "/set_timezone" in fields["Before you play"]
+    assert "Sign up" in embed.description
+
+
 class TestSignupLock:
     async def _season(self, state: str):
         from bot.db.models import Season, SeasonStatus

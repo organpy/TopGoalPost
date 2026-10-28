@@ -190,8 +190,13 @@ async def test_button_rebuilt_from_custom_id_resolves_report(db):
 
     assert await _completed(db, match_id)
     channel.fetch_message.assert_awaited_once_with(20)
-    assert "confirmed" in message.edit.call_args.kwargs["content"]
-    assert "<@111>" in channel.send.call_args.args[0]
+    outcome = message.edit.call_args.kwargs
+    assert outcome["content"] is None
+    assert outcome["embed"].title == "✅ Score confirmed"
+    assert "Score confirmed" in outcome["embed"].description
+    notice = channel.send.call_args.kwargs
+    assert "<@111>" in notice["content"]
+    assert notice["embed"].title == "✅ Score confirmed"
 
 
 def _member(user_id: int, roles=(), admin=False):
