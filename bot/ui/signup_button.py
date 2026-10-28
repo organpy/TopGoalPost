@@ -2,6 +2,7 @@
 
 import discord
 
+from bot.utils.embeds import BLUE, card, season_track, subtext
 from bot.utils.errors import ReportingView
 
 from bot.config import Config
@@ -19,28 +20,25 @@ def signup_panel_embed(season: int | None = None) -> discord.Embed:
         if season is None
         else f"📝 Season {season} signups are open"
     )
-    embed = discord.Embed(
-        title=title,
-        description=(
+    embed = card(
+        title,
+        (
             "Fancy a shot at the title? Hit **Sign up** below, pick your "
-            "nickname, and you're in."
+            "nickname, and you're in.\n\n"
+            + subtext(season_track("SIGNUP"))
         ),
-        color=discord.Color.from_rgb(52, 152, 219),
+        color=BLUE,
+        section="Player signup",
+        timestamp=False,
     )
+    embed.add_field(name="1️⃣ Sign up", value="Tap the button below", inline=True)
+    embed.add_field(name="2️⃣ Timezone", value="`/set_timezone`", inline=True)
+    embed.add_field(name="3️⃣ Availability", value="`/add_timeslot`", inline=True)
     embed.add_field(
-        name="Before you play",
-        value=(
-            "Set your timezone with `/set_timezone`, then let opponents know "
-            "when you're free with `/add_timeslot` or `/add_date_timeslot`."
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="Already registered?",
+        name="👋 Already registered?",
         value="You're all set! Change your details any time with `/editname` or `/editcountry`.",
         inline=False,
     )
-    embed.set_footer(text="TopGoalPost · See you on the pitch")
     return embed
 
 

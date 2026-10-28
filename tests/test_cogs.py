@@ -1503,7 +1503,7 @@ def test_signup_panel_embed_has_season_and_instructions():
     fields = {field.name: field.value for field in embed.fields}
 
     assert "Season 4" in embed.title
-    assert "/set_timezone" in fields["Before you play"]
+    assert "/set_timezone" in fields["2️⃣ Timezone"]
     assert "Sign up" in embed.description
 
 

@@ -4,6 +4,7 @@ import logging
 
 import discord
 
+from bot.utils.embeds import GOLD, GREEN, GREY, RED, card, quote, subtext
 from bot.utils.errors import ReportingView
 
 from bot.cogs.checks import is_moderator
@@ -20,10 +21,10 @@ REPORT_ACTIONS = {
     "dispute": ("Dispute", discord.ButtonStyle.secondary),
 }
 
-REPORT_COLOR = discord.Color.from_rgb(241, 196, 15)
-CONFIRMED_COLOR = discord.Color.from_rgb(46, 204, 113)
-REJECTED_COLOR = discord.Color.from_rgb(231, 76, 60)
-DISPUTED_COLOR = discord.Color.from_rgb(149, 165, 166)
+REPORT_COLOR = GOLD
+CONFIRMED_COLOR = GREEN
+REJECTED_COLOR = RED
+DISPUTED_COLOR = GREY
 
 REPORT_NEXT_STEPS = {
     "confirm": "It's in the books. Check the standings or bracket to see who's next.",
@@ -32,20 +33,28 @@ REPORT_NEXT_STEPS = {
     "error": "Give it another try. If it keeps happening, let a host know.",
 }
 
+OUTCOME_TITLES = {
+    "confirm": ("✅ Result locked in", CONFIRMED_COLOR),
+    "reject": ("❌ Score rejected", REJECTED_COLOR),
+    "dispute": ("⚠️ Score under review", DISPUTED_COLOR),
+    "error": ("⚠️ That score couldn't be saved", REJECTED_COLOR),
+}
+
 
 def report_prompt_embed() -> discord.Embed:
     """Ephemeral /report picker header."""
-    embed = discord.Embed(
-        title="🎮 How did it go?",
-        description=(
-            "Pick your match from the menu, then tap the final score. Scores "
-            "are shown as **your goals – their goals**. Use **Custom score** "
-            "if it isn't listed.\n\n"
-            "Your opponent will be asked to confirm it before it counts."
+    embed = card(
+        "🎮 How did it go?",
+        (
+            "**1.** Pick your match from the menu\n"
+            "**2.** Tap the final score, or **Custom score** if it isn't listed\n"
+            "**3.** Your opponent confirms it, and it counts\n\n"
+            + subtext("Scores read as your goals – their goals. Only report once the match is over.")
         ),
         color=REPORT_COLOR,
+        section="Score report",
+        timestamp=False,
     )
-    embed.set_footer(text="Only report once the match is over.")
     return embed
 
 
@@ -59,33 +68,22 @@ def score_report_embed(
     opponent_goals: int,
 ) -> discord.Embed:
     """Public score-confirmation card posted after /report."""
-    embed = discord.Embed(
-        title="🎮 Final score check",
-        description=(
-            f"Hey <@{opponent_id}>, <@{reporter_id}> just reported your match. "
-            "Does this look right?"
+    embed = card(
+        "🎮 Final score check",
+        (
+            f"## <@{reporter_id}> {my_goals} – {opponent_goals} <@{opponent_id}>\n"
+            f"Hey <@{opponent_id}>, does this look right?\n"
+            + subtext(
+                f"Reported by <@{reporter_id}> · only your opponent or a "
+                "moderator can answer"
+            )
         ),
         color=REPORT_COLOR,
+        section=f"Match #{match_id} · Report #{report_id}",
     )
-    embed.add_field(
-        name="Reported score",
-        value=(
-            f"<@{reporter_id}> **{my_goals} – {opponent_goals}** "
-            f"<@{opponent_id}>"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="What now?",
-        value=(
-            "Hit **Confirm** if it's correct. If something's off, use "
-            "**Reject** or **Dispute** and tell us why."
-        ),
-        inline=False,
-    )
-    embed.set_footer(
-        text=f"Match #{match_id} · Report #{report_id} · Only your opponent or a moderator can answer"
-    )
+    embed.add_field(name="✅ Correct", value="Hit **Confirm**", inline=True)
+    embed.add_field(name="✏️ Wrong", value="**Reject** it", inline=True)
+    embed.add_field(name="🧑‍⚖️ Unsure", value="**Dispute** it", inline=True)
     return embed
 
 
@@ -97,17 +95,15 @@ def score_outcome_embed(
     content: str,
 ) -> discord.Embed:
     """Result card reused when a report is confirmed, rejected or disputed."""
-    meta = {
-        "confirm": ("✅ Result locked in", CONFIRMED_COLOR),
-        "reject": ("❌ Score rejected", REJECTED_COLOR),
-        "dispute": ("⚠️ Score under review", DISPUTED_COLOR),
-        "error": ("⚠️ That score couldn't be saved", REJECTED_COLOR),
-    }
-    title, color = meta.get(action, ("Score report updated", REPORT_COLOR))
-    embed = discord.Embed(title=title, description=content, color=color)
+    title, color = OUTCOME_TITLES.get(action, ("Score report updated", REPORT_COLOR))
+    embed = card(
+        title,
+        content,
+        color=color,
+        section=f"Match #{match_id} · Report #{report_id}",
+    )
     if next_step := REPORT_NEXT_STEPS.get(action):
-        embed.add_field(name="What now?", value=next_step, inline=False)
-    embed.set_footer(text=f"Match #{match_id} · Report #{report_id}")
+        embed.add_field(name="➡️ What now?", value=next_step, inline=False)
     return embed
 
 
@@ -120,33 +116,32 @@ def score_notice_embed(
     reason: str | None = None,
 ) -> discord.Embed:
     """Public notification posted after a report is resolved."""
-    meta = {
-        "confirm": ("✅ Result locked in", CONFIRMED_COLOR),
-        "reject": ("❌ Score rejected", REJECTED_COLOR),
-        "dispute": ("⚠️ Score under review", DISPUTED_COLOR),
-    }
-    title, color = meta.get(action, ("Score report updated", REPORT_COLOR))
-    embed = discord.Embed(title=title, description=notice, color=color)
+    title, color = OUTCOME_TITLES.get(action, ("Score report updated", REPORT_COLOR))
+    embed = card(
+        title,
+        notice,
+        color=color,
+        section=f"Match #{match_id} · Report #{report_id}",
+    )
     if reason:
-        embed.add_field(name="Reason given", value=f"> {reason}", inline=False)
+        embed.add_field(name="💬 Reason given", value=quote(reason), inline=False)
     if next_step := REPORT_NEXT_STEPS.get(action):
-        embed.add_field(name="What now?", value=next_step, inline=False)
-    embed.set_footer(text=f"Match #{match_id} · Report #{report_id}")
+        embed.add_field(name="➡️ What now?", value=next_step, inline=False)
     return embed
 
 
 def report_submitted_embed(*, match_id: int) -> discord.Embed:
     """Ephemeral receipt shown to the reporter after /report."""
-    embed = discord.Embed(
-        title="📨 Score sent",
-        description=(
-            f"Thanks! Your opponent has been asked to confirm the result of "
-            f"**Match #{match_id}**."
+    return card(
+        "📨 Score sent",
+        (
+            f"Thanks! Your opponent has been asked to confirm **Match #{match_id}**.\n"
+            + subtext("We'll let you know as soon as they answer.")
         ),
         color=REPORT_COLOR,
+        section="Score report",
+        timestamp=False,
     )
-    embed.set_footer(text="We'll let you know as soon as they answer.")
-    return embed
 
 
 class ReportActionButton(
@@ -250,11 +245,11 @@ async def apply_report_action(
         return
 
     if action == "confirm":
-        content = f"Both players agree, so it's official. GG!\n**{result['summary']}**"
+        content = f"### {result['summary']}\nBoth players agree, so it's official. GG! 🤝"
     else:
         content = f"<@{interaction.user.id}> {PAST_TENSE[action]} this score."
     if reason:
-        content += f"\n> {reason}"
+        content += f"\n{quote(reason)}"
 
     if report is not None:
         await publish_outcome(

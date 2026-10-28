@@ -12,10 +12,11 @@ from bot.utils.announce import (
 def test_stage_announcement_embed_has_actions_and_next_stage():
     embed = stage_announcement_embed("open")
 
-    assert embed.title == "🎲 Open stage is live"
+    assert embed.title == "🎲 The Open stage is live"
     fields = {field.name: field.value for field in embed.fields}
-    assert "/open" in fields["What to do"]
-    assert fields["Next stage"] == "Playins"
+    assert "/open" in fields["📊 Standings"]
+    assert fields["⏭️ Up next"] == "Playins"
+    assert "**▸ Open**" in embed.description
     assert embed.footer.text == "TopGoalPost · Season stage update"
 
 
@@ -43,8 +44,8 @@ def test_season_close_embed_summarizes_result():
     assert "Alice" in embed.description
     assert "Bob" in embed.description
     fields = {field.name: field.value for field in embed.fields}
-    assert "/season_summary" in fields["Full recap"]
-    assert "Season 4" in fields["Next season"]
+    assert "/season_summary" in fields["📜 Full recap"]
+    assert "Season 4" in fields["🔜 Next season"]
     assert "/season create" not in "".join(f.value for f in embed.fields)
 
 

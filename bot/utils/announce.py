@@ -1,12 +1,20 @@
 """Public stage announcements and the bot's status line."""
 
 import logging
-from datetime import datetime, timezone
-
 import discord
 
 from bot.config import Config
 from bot.services.season import next_state
+from bot.utils.embeds import (
+    BLUE,
+    GOLD,
+    GREEN,
+    ORANGE,
+    PURPLE,
+    card,
+    season_track,
+    subtext,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,26 +34,27 @@ STAGE_ANNOUNCEMENTS = {
             "A brand-new **PBLC** season is on the way, and we'd love to have "
             "you in it. Grab your spot before the bracket locks!"
         ),
-        "color": discord.Color.from_rgb(52, 152, 219),
-        "action": "Type `/signup` to join. It takes about ten seconds.",
-        "extra": (
-            "Set your timezone with `/set_timezone` so your opponents know "
-            "when you're around."
-        ),
+        "color": BLUE,
+        "actions": [
+            ("✍️ Join", "`/signup`"),
+            ("🌍 Timezone", "`/set_timezone`"),
+            ("🕒 Availability", "`/add_timeslot`"),
+        ],
+        "tip": "Setting your timezone early makes scheduling much easier for everyone.",
     },
     "OPEN": {
-        "title": "🎲 Open stage is live",
+        "title": "🎲 The Open stage is live",
         "description": (
             "Signups are closed and the first matches are out. Everyone gets "
             "**four games** to show what they've got. Good luck!"
         ),
-        "color": discord.Color.from_rgb(230, 126, 34),
-        "action": (
-            "Check where you stand with `/open`, pick a time with your "
-            "opponent using `/offer_time`, and `/report` the score once you've "
-            "played."
-        ),
-        "extra": "Not sure when your opponent is free? `/check_times` shows the overlap.",
+        "color": ORANGE,
+        "actions": [
+            ("📊 Standings", "`/open`"),
+            ("🗓️ Schedule", "`/offer_time`"),
+            ("🎮 Report", "`/report`"),
+        ],
+        "tip": "Not sure when your opponent is free? `/check_times` shows the overlap.",
     },
     "PLAYIN": {
         "title": "⚔️ Playins are live",
@@ -53,12 +62,13 @@ STAGE_ANNOUNCEMENTS = {
             "The Open stage is done, and now it's the climb. Win your playin "
             "matches to earn a place in **Swiss**."
         ),
-        "color": discord.Color.from_rgb(155, 89, 182),
-        "action": (
-            "See the ladder with `/playins`, set up your match with "
-            "`/offer_time`, and `/report` the result when you're done."
-        ),
-        "extra": "New rounds open up on their own as soon as the current one wraps.",
+        "color": PURPLE,
+        "actions": [
+            ("🪜 Ladder", "`/playins`"),
+            ("🗓️ Schedule", "`/offer_time`"),
+            ("🎮 Report", "`/report`"),
+        ],
+        "tip": "New rounds open up on their own as soon as the current one wraps.",
     },
     "SWISS": {
         "title": "🇨🇭 Swiss is live",
@@ -66,12 +76,13 @@ STAGE_ANNOUNCEMENTS = {
             "Thirty-two players remain. Each round pairs you with someone on "
             "the same record, so every game counts."
         ),
-        "color": discord.Color.from_rgb(46, 204, 113),
-        "action": (
-            "Follow the bracket with `/swiss`, agree a time using "
-            "`/offer_time`, and `/report` your score after the match."
-        ),
-        "extra": "Look at the bracket after each round to find your next opponent.",
+        "color": GREEN,
+        "actions": [
+            ("📊 Bracket", "`/swiss`"),
+            ("🗓️ Schedule", "`/offer_time`"),
+            ("🎮 Report", "`/report`"),
+        ],
+        "tip": "Look at the bracket after each round to find your next opponent.",
     },
     "PLAYOFF": {
         "title": "🏆 Playoffs are live",
@@ -79,38 +90,40 @@ STAGE_ANNOUNCEMENTS = {
             "This is it. The double-elimination bracket is set and only one "
             "player walks away with the title."
         ),
-        "color": discord.Color.from_rgb(241, 196, 15),
-        "action": (
-            "Find your series with `/playoff`, lock in a time using "
-            "`/offer_time`, and `/report` each game as soon as it ends."
-        ),
-        "extra": "Every series is best of three, so one bad game won't knock you out.",
+        "color": GOLD,
+        "actions": [
+            ("🏆 Bracket", "`/playoff`"),
+            ("🗓️ Schedule", "`/offer_time`"),
+            ("🎮 Report", "`/report`"),
+        ],
+        "tip": "Every series is best of three. Report each game as soon as it ends.",
     },
 }
 
 
 def stage_announcement_embed(state: str) -> discord.Embed | None:
     """Build the public card for a season-stage change."""
-    meta = STAGE_ANNOUNCEMENTS.get((state or "").upper())
+    state = (state or "").upper()
+    meta = STAGE_ANNOUNCEMENTS.get(state)
     if meta is None:
         return None
 
-    embed = discord.Embed(
-        title=meta["title"],
-        description=meta["description"],
+    embed = card(
+        meta["title"],
+        f"{meta['description']}\n\n{subtext(season_track(state))}",
         color=meta["color"],
-        timestamp=datetime.now(timezone.utc),
+        section="Season stage update",
     )
-    embed.add_field(name="What to do", value=meta["action"], inline=False)
-    if extra := meta.get("extra"):
-        embed.add_field(name="Good to know", value=extra, inline=False)
+    embed.set_author(name=f"{STAGE_LABELS[state]} stage")
+    for name, value in meta["actions"]:
+        embed.add_field(name=name, value=value, inline=True)
+    embed.add_field(name="💡 Good to know", value=meta["tip"], inline=False)
     if upcoming := next_state(state):
         embed.add_field(
-            name="Next stage",
+            name="⏭️ Up next",
             value=STAGE_LABELS.get(upcoming, upcoming),
             inline=True,
         )
-    embed.set_footer(text="TopGoalPost · Season stage update")
     return embed
 
 
@@ -118,30 +131,28 @@ def season_close_embed(
     *, season: int, champion: str, runner_up: str | None = None
 ) -> discord.Embed:
     """Build the public season-over card."""
-    embed = discord.Embed(
-        title=f"🏆 Season {season} is over",
-        color=discord.Color.from_rgb(241, 196, 15),
-        timestamp=datetime.now(timezone.utc),
-    )
-    lines = [f"Congratulations to **{champion}**, our Season {season} champion! 🎉"]
+    lines = [f"# 👑 {champion}", f"is the **Season {season}** champion! 🎉"]
     if runner_up:
-        lines.append(f"Huge respect to **{runner_up}** for a great run to the final.")
-    lines.append("Thanks to everyone who played. You made this season what it was.")
-    embed.description = "\n\n".join(lines)
-    embed.add_field(
-        name="Full recap",
-        value="Relive the season with `/season_summary`.",
-        inline=False,
+        lines.append(f"\n🥈 Runner-up: **{runner_up}**, what a run to the final.")
+    lines.append(
+        "\nThanks to everyone who played. You made this season what it was."
+    )
+    embed = card(
+        f"🏆 Season {season} is over",
+        "\n".join(lines),
+        color=GOLD,
+        section="Season recap",
     )
     embed.add_field(
-        name="Next season",
-        value=(
-            f"Season {season + 1} is coming. Keep an eye on this channel for "
-            "signups."
-        ),
-        inline=False,
+        name="📜 Full recap",
+        value="`/season_summary`",
+        inline=True,
     )
-    embed.set_footer(text="TopGoalPost · Season recap")
+    embed.add_field(
+        name="🔜 Next season",
+        value=f"Season {season + 1} signups will be posted here.",
+        inline=True,
+    )
     return embed
 
 
