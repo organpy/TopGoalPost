@@ -18,7 +18,7 @@ LeagueEmoji = EmojiSpec
 EMOJIS: dict[str, EmojiSpec] = dict(BRANDING.emojis)
 
 _BOUND_BOT: discord.Client | None = None
-_APPLICATION_EMOJIS: dict[int, str] = {}
+_APPLICATION_EMOJIS: dict[int, discord.Emoji] = {}
 
 
 def bind(bot: discord.Client) -> None:
@@ -47,18 +47,31 @@ async def load_application_emojis(bot: discord.Client | None = None) -> None:
         return
 
     _APPLICATION_EMOJIS.clear()
-    _APPLICATION_EMOJIS.update({emoji.id: str(emoji) for emoji in emojis})
+    _APPLICATION_EMOJIS.update({emoji.id: emoji for emoji in emojis})
     if emojis:
         logger.info("Loaded %s application emoji(s).", len(emojis))
+
+
+def _resolve(spec: EmojiSpec) -> discord.Emoji | None:
+    if _BOUND_BOT is None or spec.emoji_id is None:
+        return None
+    emoji = _BOUND_BOT.get_emoji(spec.emoji_id)
+    if emoji is not None:
+        return emoji
+    return _APPLICATION_EMOJIS.get(spec.emoji_id)
 
 
 def get(key: str) -> str:
     """Return the custom emoji when available, otherwise its fallback."""
     spec = EMOJIS[key]
-    if _BOUND_BOT is not None and spec.emoji_id is not None:
-        emoji = _BOUND_BOT.get_emoji(spec.emoji_id)
-        if emoji is not None:
-            return str(emoji)
-        if markup := _APPLICATION_EMOJIS.get(spec.emoji_id):
-            return markup
+    if emoji := _resolve(spec):
+        return str(emoji)
     return spec.fallback
+
+
+def get_url(key: str) -> str | None:
+    """Return the emoji image URL for places that do not render emoji markup."""
+    spec = EMOJIS[key]
+    if emoji := _resolve(spec):
+        return str(emoji.url)
+    return None

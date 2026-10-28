@@ -99,7 +99,15 @@ def test_unbind_restores_fallbacks():
     assert emojis.get("OPEN") == "🎲"
 
 
+def test_stage_author_never_contains_custom_emoji_markup():
+    embed = stage_announcement_embed("OPEN")
+
+    assert embed.author.name == "Open stage"
+    assert embed.author.icon_url is None
+
+
 def test_embeds_pick_up_custom_emoji_after_binding():
+    league_id = emojis.EMOJIS["LEAGUE"].emoji_id
     open_id = emojis.EMOJIS["OPEN"].emoji_id
     signup_id = emojis.EMOJIS["SIGNUP"].emoji_id
     match_id = emojis.EMOJIS["MATCH"].emoji_id
@@ -108,9 +116,12 @@ def test_embeds_pick_up_custom_emoji_after_binding():
     champion_id = emojis.EMOJIS["CHAMPION"].emoji_id
     playoffs_id = emojis.EMOJIS["PLAYOFFS"].emoji_id
 
+    league = discord.PartialEmoji(name="pb_pblc", id=league_id)
+
     emojis.bind(
         FakeBot(
             {
+                league_id: league,
                 open_id: discord.PartialEmoji(name="pb_open", id=open_id),
                 signup_id: discord.PartialEmoji(name="pb_signup", id=signup_id),
                 match_id: discord.PartialEmoji(name="pb_match", id=match_id),
@@ -125,10 +136,10 @@ def test_embeds_pick_up_custom_emoji_after_binding():
         )
     )
 
-    assert (
-        stage_announcement_embed("OPEN").title
-        == f"<:pb_open:{open_id}> The Open stage is live"
-    )
+    announcement = stage_announcement_embed("OPEN")
+    assert announcement.title == f"<:pb_open:{open_id}> The Open stage is live"
+    assert announcement.author.name == "Open stage"
+    assert announcement.author.icon_url == league.url
     assert (
         signup_panel_embed(4).title
         == f"<:pb_signup:{signup_id}> Season 4 signups are open"

@@ -7,6 +7,7 @@ from bot.branding import BRANDING
 from bot.config import Config
 from bot.services.season import next_state
 from bot.utils.emojis import get as emoji
+from bot.utils.emojis import get_url as emoji_url
 from bot.utils.embeds import (
     BLUE,
     GOLD,
@@ -122,7 +123,10 @@ def stage_announcement_embed(state: str) -> discord.Embed | None:
         color=meta["color"],
         section="Season stage update",
     )
-    embed.set_author(name=f"{emoji('LEAGUE')} {STAGE_LABELS[state]} stage")
+    embed.set_author(
+        name=f"{STAGE_LABELS[state]} stage",
+        icon_url=emoji_url("LEAGUE"),
+    )
     for name, value in meta["actions"]:
         embed.add_field(name=name, value=value, inline=True)
     embed.add_field(name="💡 Good to know", value=meta["tip"], inline=False)
