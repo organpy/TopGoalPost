@@ -9,6 +9,7 @@ from functools import lru_cache
 
 from PIL import Image, ImageDraw, ImageFont
 
+from bot.branding import BRANDING
 from bot.services.season_summary import SeasonAward, SeasonSummary, SummaryPlayer
 from bot.utils.countries import COUNTRIES
 from . import asset_path, save_png_atomic
@@ -337,7 +338,7 @@ def _draw_footer(d: ImageDraw.ImageDraw, summary: SeasonSummary) -> None:
     d.line((MARGIN, y, SUMMARY_W - MARGIN, y), fill=RULE)
     d.text(
         (MARGIN, y + 12),
-        "TopGoalPost · Pro Bobble League Circuit",
+        _fit(BRANDING.footer, CONTENT_W - 240, 18),
         font=_font(18),
         fill=MUTED,
     )

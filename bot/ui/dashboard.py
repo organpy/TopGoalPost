@@ -3,6 +3,7 @@
 import discord
 from discord.ext import commands
 
+from bot.branding import BRANDING
 from bot.cogs.checks import require_host_app
 from discord import app_commands
 from sqlalchemy import select
@@ -328,7 +329,7 @@ class DashboardCog(commands.Cog):
             description=f"**State:** `{state}`",
             color=0x2b2d31
         )
-        embed.set_footer(text="TopGoalPost")
+        embed.set_footer(text=BRANDING.bot_name)
 
         flow = TournamentFlowService()
         flow_info = await flow.get_status()

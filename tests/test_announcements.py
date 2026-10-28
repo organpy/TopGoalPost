@@ -2,6 +2,7 @@
 
 import discord
 
+from bot.branding import BRANDING
 from bot.utils.announce import (
     announce,
     season_close_embed,
@@ -17,7 +18,7 @@ def test_stage_announcement_embed_has_actions_and_next_stage():
     assert "/open" in fields["📊 Standings"]
     assert fields["⏭️ Up next"] == "Playins"
     assert "**▸ Open**" in embed.description
-    assert embed.footer.text == "TopGoalPost · Season stage update"
+    assert embed.footer.text == f"{BRANDING.bot_name} · Season stage update"
 
 
 def test_public_announcements_never_mention_host_commands():

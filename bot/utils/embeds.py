@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 
 import discord
 
-BRAND = "TopGoalPost"
+from bot.branding import BRANDING
+
+BRAND = BRANDING.bot_name
 
 BLUE = discord.Color.from_rgb(88, 141, 255)
 ORANGE = discord.Color.from_rgb(255, 146, 72)
@@ -31,7 +33,7 @@ def card(
     section: str | None = None,
     timestamp: datetime | bool = True,
 ) -> discord.Embed:
-    """An embed with the house footer (``TopGoalPost · section``) and timestamp."""
+    """An embed with the house footer (bot name · section) and timestamp."""
     if timestamp is True:
         timestamp = datetime.now(timezone.utc)
     embed = discord.Embed(
@@ -40,7 +42,7 @@ def card(
         color=color,
         timestamp=timestamp or None,
     )
-    embed.set_footer(text=f"{BRAND} · {section}" if section else BRAND)
+    embed.set_footer(text=BRANDING.footer_text(section))
     return embed
 
 
