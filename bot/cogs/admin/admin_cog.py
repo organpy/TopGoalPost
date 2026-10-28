@@ -14,13 +14,14 @@ from discord.ext import commands
 from bot.utils.errors import error_message, log_error
 from bot.cogs.checks import require_host, require_host_app
 
-from bot.db import get_db_manager, ImageCacheRepository, PlayerRepository
+from bot.db import get_db_manager, PlayerRepository
 from bot.services import audit
 from bot.services.health import Check, HealthService
 from bot.services.tournament_flow import TournamentFlowService
 from bot.services.season import SeasonService
 from bot.config import Config
 from bot.rendering import StandingsMaker, ASSETS_ROOT
+from bot.rendering.cache import clear_render_cache
 
 logger = logging.getLogger(__name__)
 
@@ -56,14 +57,28 @@ class AdminCog(commands.Cog):
         importlib.reload(StandingsMaker)
         await ctx.send("StandingsMaker reloaded.")
 
-    @commands.command(name="resetimages", help="Clear the standings image cache")
+    @commands.command(name="resetimages", help="Clear the rendered-image cache")
     @require_host()
     async def resetimages_cmd(self, ctx: commands.Context):
-        async with self.db.get_session() as session:
-            repo = ImageCacheRepository(session)
-            await repo.delete_all()
-            await session.commit()
-        await ctx.send("Image cache cleared.")
+        count = await clear_render_cache()
+        await ctx.send(
+            f"Rendered-image cache cleared ({count} entries). "
+            "The next request will re-render."
+        )
+
+    @app_commands.command(
+        name="reset_cache",
+        description="Clear cached rendered images (host)",
+    )
+    @require_host_app()
+    async def reset_cache_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        count = await clear_render_cache()
+        await interaction.followup.send(
+            f"Rendered-image cache cleared ({count} entries). "
+            "The next request will re-render.",
+            ephemeral=True,
+        )
 
     @commands.command(name="sync_commands", hidden=True)
     async def sync_commands_prefix(self, ctx: commands.Context):
@@ -227,11 +242,7 @@ class AdminCog(commands.Cog):
     @commands.command(name="getleaderboard", hidden=True, help="Mention the top N open-stage players")
     @require_host()
     async def getleaderboard_cmd(self, ctx: commands.Context, amount: int):
-        async with self.db.get_session() as session:
-            repo = ImageCacheRepository(session)
-            await repo.delete_all()
-            await session.commit()
-
+        await clear_render_cache()
         result = await StandingsMaker.get_open_with_players(sort_by_rank=True)
         players = result[3]
         ids = [f"<@{p.id}>" for p in players[:amount]]

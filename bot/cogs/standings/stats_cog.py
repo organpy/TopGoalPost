@@ -12,6 +12,11 @@ from discord import app_commands
 from discord.ui import Button
 
 from bot.rendering import asset_path
+from bot.rendering.cache import (
+    get_cached_render,
+    render_cache_key,
+    store_render,
+)
 from bot.rendering.playercard import render_player_card
 from bot.rendering.seasonsummary import render_season_summary
 from bot.services.match import MatchService
@@ -32,6 +37,23 @@ HISTORY_PER_PAGE = 8
 
 # Rendering images is expensive; one card/summary per user per window.
 IMAGE_COOLDOWN_SECONDS = 20.0
+
+
+async def _send_render(
+    interaction: discord.Interaction,
+    path: str,
+    *,
+    filename: str,
+) -> None:
+    """Send a cached local file, or a legacy URL entry, ephemerally."""
+    if path.startswith(("http://", "https://")):
+        await interaction.followup.send(path, ephemeral=True)
+        return
+    await interaction.followup.send(
+        file=discord.File(path, filename=filename),
+        ephemeral=True,
+    )
+
 
 def _result_line(match: dict) -> str:
     """One history row: result square, score, opponent, where it was played."""
@@ -352,15 +374,27 @@ class StatsCog(commands.Cog):
         filename = asset_path(
             "tables", f"card_{stats.discord_id}_s{stats.season}.png"
         )
+        cache_key = render_cache_key("playercard", stats)
+        cached = await get_cached_render(cache_key)
+        if cached:
+            await _send_render(
+                interaction,
+                cached,
+                filename=f"card_s{stats.season}.png",
+            )
+            return
+
         try:
             await asyncio.to_thread(render_player_card, stats, filename)
         except Exception as exc:  # pragma: no cover - defensive
             await interaction.followup.send(f"Failed to render card: {exc}", ephemeral=True)
             return
 
-        await interaction.followup.send(
-            file=discord.File(filename, filename=f"card_s{stats.season}.png"),
-            ephemeral=True,
+        await store_render(cache_key, filename)
+        await _send_render(
+            interaction,
+            filename,
+            filename=f"card_s{stats.season}.png",
         )
 
     @app_commands.command(
@@ -397,6 +431,16 @@ class StatsCog(commands.Cog):
         filename = asset_path(
             "tables", f"season_summary_s{season_num}.png"
         )
+        cache_key = render_cache_key("season_summary", summary)
+        cached = await get_cached_render(cache_key)
+        if cached:
+            await _send_render(
+                interaction,
+                cached,
+                filename=f"season_summary_s{season_num}.png",
+            )
+            return
+
         try:
             await asyncio.to_thread(
                 render_season_summary, summary, filename
@@ -407,11 +451,11 @@ class StatsCog(commands.Cog):
             )
             return
 
-        await interaction.followup.send(
-            file=discord.File(
-                filename, filename=f"season_summary_s{season_num}.png"
-            ),
-            ephemeral=True,
+        await store_render(cache_key, filename)
+        await _send_render(
+            interaction,
+            filename,
+            filename=f"season_summary_s{season_num}.png",
         )
 
     @app_commands.command(name="history", description="View a player's match history")

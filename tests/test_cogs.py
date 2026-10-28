@@ -700,6 +700,42 @@ class TestStatsCog:
         assert kwargs["view"].tab == "history"
         assert kwargs["view"].profile.title == "ProfileTester"
 
+    async def test_playercard_command_reuses_cached_render(
+        self, mock_interaction, mock_bot, tmp_path
+    ):
+        from bot.services.player_stats import PlayerStats
+
+        stats = PlayerStats(
+            player_id=1,
+            name="Alice",
+            country="US",
+            discord_id=101,
+            season=1,
+            season_active=True,
+            registered=True,
+        )
+        cog = StatsCog(mock_bot)
+        cog._load_stats = AsyncMock(return_value=stats)
+        output = tmp_path / "card.png"
+
+        def fake_render(_stats, filename):
+            Image.new("RGB", (20, 20)).save(filename)
+            return filename
+
+        with patch(
+            "bot.cogs.standings.stats_cog.asset_path",
+            return_value=str(output),
+        ), patch(
+            "bot.cogs.standings.stats_cog.render_player_card",
+            side_effect=fake_render,
+        ) as renderer:
+            await cog.playercard_cmd.callback(cog, mock_interaction)
+            await cog.playercard_cmd.callback(cog, mock_interaction)
+
+        assert renderer.call_count == 1
+        assert output.exists()
+        assert mock_interaction.followup.send.await_count == 2
+
     async def test_season_summary_command_renders_image(
         self, mock_interaction, mock_bot, tmp_path
     ):
@@ -756,9 +792,11 @@ class TestStatsCog:
         ), patch(
             "bot.cogs.standings.stats_cog.render_season_summary",
             side_effect=fake_render,
-        ):
+        ) as renderer:
+            await cog.season_summary_cmd.callback(cog, mock_interaction, 1)
             await cog.season_summary_cmd.callback(cog, mock_interaction, 1)
 
+        assert renderer.call_count == 1
         mock_interaction.followup.send.assert_awaited()
         kwargs = mock_interaction.followup.send.call_args.kwargs
         assert kwargs["ephemeral"] is True
@@ -779,6 +817,28 @@ class TestStatsCog:
         message = mock_interaction.followup.send.call_args[0][0]
         assert "No completed matches" in message
         assert mock_interaction.followup.send.call_args.kwargs["ephemeral"] is True
+
+
+class TestAdminCache:
+    async def test_reset_cache_command_clears_rendered_cache(
+        self, mock_interaction, mock_bot
+    ):
+        from bot.cogs.admin.admin_cog import AdminCog
+        from bot.db import ImageCacheRepository
+
+        async with get_db_manager().get_session() as session:
+            await ImageCacheRepository(session).set("cached-key", "cached-file.png")
+            await session.commit()
+
+        cog = AdminCog(mock_bot)
+        await cog.reset_cache_cmd.callback(cog, mock_interaction)
+
+        mock_interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+        message = mock_interaction.followup.send.call_args[0][0]
+        assert "1 entries" in message
+
+        async with get_db_manager().get_session() as session:
+            assert await ImageCacheRepository(session).get("cached-key") is None
 
 
 class TestDashboardView:

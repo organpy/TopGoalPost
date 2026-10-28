@@ -487,7 +487,8 @@ both are notified and the agreed time is posted in the configured
 | `/doctor` | Check DB, migrations, config keys, channels, roles, bot permissions and asset folders |
 | `/audit [limit] [action]` | Recent score edits, forfeits, stage changes, season and config changes, with who did them |
 | `!reimport` | Hot-reload the standings renderer |
-| `!resetimages` | Clear the standings image cache |
+| `/reset_cache` | Clear the rendered-image cache without touching data or avatars |
+| `!resetimages` | Prefix alias for `/reset_cache` |
 | `!sync_commands` | Force-resync slash commands |
 | `!getpfps` | Download registered players' avatars into `assets/pfps/` (others are never stored) |
 | `!giveroles` | Assign current-stage role to eligible players |
@@ -498,6 +499,13 @@ both are notified and the agreed time is posted in the configured
 | `!dummy_add N` | Add N dummy players to current season (dev mode only) |
 | `!dummy_score` | Randomly score all unplayed matches (dev) |
 | `!dummy_replace OLD NEW` | Change a player's Discord ID (dev) |
+
+Rendered standings, player cards, and season summaries are cached by content
+hash. `/open`, `/playins`, `/swiss`, and `/playoff` allow one render per phase
+per user every 5 seconds; `/playercard` and `/season_summary` allow one every
+20 seconds. `/reset_cache` clears only cache rows — match data, players,
+avatars, and season history are never removed. The next request re-renders
+from scratch and overwrites the old image atomically.
 
 </details>
 

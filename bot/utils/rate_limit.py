@@ -3,7 +3,7 @@
 from collections import deque
 from math import ceil
 from time import monotonic
-from typing import Callable
+from typing import Callable, Hashable
 
 
 class SlidingWindowRateLimiter:
@@ -19,9 +19,9 @@ class SlidingWindowRateLimiter:
         self.limit = limit
         self.window_seconds = window_seconds
         self._clock = clock
-        self._hits: dict[int, deque[float]] = {}
+        self._hits: dict[Hashable, deque[float]] = {}
 
-    def _prune(self, key: int, now: float) -> deque[float]:
+    def _prune(self, key: Hashable, now: float) -> deque[float]:
         hits = self._hits.get(key)
         if hits is None:
             return deque()
@@ -32,7 +32,7 @@ class SlidingWindowRateLimiter:
             self._hits.pop(key, None)
         return hits
 
-    def retry_after(self, key: int) -> int:
+    def retry_after(self, key: Hashable) -> int:
         """Seconds until ``key`` may act again, or 0 when it is allowed now."""
         now = self._clock()
         hits = self._prune(key, now)
@@ -40,7 +40,7 @@ class SlidingWindowRateLimiter:
             return 0
         return max(1, ceil(self.window_seconds - (now - hits[0])))
 
-    def consume(self, key: int) -> int:
+    def consume(self, key: Hashable) -> int:
         """Record one action for ``key``.
 
         Returns 0 when the action is allowed, otherwise the whole seconds

@@ -48,6 +48,15 @@ def test_sliding_window_rate_limiter_blocks_and_recovers():
     assert limiter.consume(1) == 0
 
 
+def test_sliding_window_rate_limiter_supports_composite_keys():
+    now = 1000.0
+    limiter = SlidingWindowRateLimiter(limit=1, window_seconds=5, clock=lambda: now)
+
+    assert limiter.consume((7, "OPEN")) == 0
+    assert limiter.consume((7, "SWISS")) == 0
+    assert limiter.consume((7, "OPEN")) == 5
+
+
 def test_offer_embeds_hide_vulgar_notes_as_a_fallback():
     from bot.ui.scheduling import _safe_note
 
