@@ -6,6 +6,7 @@ import discord
 
 from bot.utils.content_filter import find_vulgarity
 from bot.utils.embeds import BLUE, GREEN, GREY, ORANGE, RED, card, quote, subtext, time_block
+from bot.utils.emojis import get as emoji
 from bot.utils.errors import ReportingView
 from bot.utils.rate_limit import COUNTER_OFFER_LIMITER
 
@@ -147,7 +148,7 @@ def offer_embed(
     counter: bool = False,
 ) -> discord.Embed:
     """DM card shown to the player who has to answer a time offer."""
-    title = "🔁 How about this instead?" if counter else "⏰ Fancy a game?"
+    title = "🔁 How about this instead?" if counter else f"{emoji('OFFER')} Fancy a game?"
     action = (
         "suggested a different time for your match"
         if counter
@@ -243,7 +244,7 @@ def match_channel_embed(
 ) -> discord.Embed:
     """Public confirmation posted in the configured match channel/thread."""
     embed = card(
-        "🗓️ Match scheduled",
+        f"{emoji('SCHEDULE')} Match scheduled",
         (
             f"## {_mention(player_a)} vs {_mention(player_b)}\n"
             f"{time_block(when)}\n\n"

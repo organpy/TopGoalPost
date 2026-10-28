@@ -5,6 +5,7 @@ import logging
 import discord
 
 from bot.utils.embeds import GOLD, GREEN, GREY, RED, card, quote, subtext
+from bot.utils.emojis import get as emoji
 from bot.utils.errors import ReportingView
 
 from bot.cogs.checks import is_moderator
@@ -44,7 +45,7 @@ OUTCOME_TITLES = {
 def report_prompt_embed() -> discord.Embed:
     """Ephemeral /report picker header."""
     embed = card(
-        "🎮 How did it go?",
+        f"{emoji('MATCH')} How did it go?",
         (
             "**1.** Pick your match from the menu\n"
             "**2.** Tap the final score, or **Custom score** if it isn't listed\n"
@@ -69,7 +70,7 @@ def score_report_embed(
 ) -> discord.Embed:
     """Public score-confirmation card posted after /report."""
     embed = card(
-        "🎮 Final score check",
+        f"{emoji('REPORT')} Final score check",
         (
             f"## <@{reporter_id}> {my_goals} – {opponent_goals} <@{opponent_id}>\n"
             f"Hey <@{opponent_id}>, does this look right?\n"
@@ -133,7 +134,7 @@ def score_notice_embed(
 def report_submitted_embed(*, match_id: int) -> discord.Embed:
     """Ephemeral receipt shown to the reporter after /report."""
     return card(
-        "📨 Score sent",
+        f"{emoji('REPORT_RECEIPT')} Score sent",
         (
             f"Thanks! Your opponent has been asked to confirm **Match #{match_id}**.\n"
             + subtext("We'll let you know as soon as they answer.")
