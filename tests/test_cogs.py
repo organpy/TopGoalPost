@@ -61,6 +61,8 @@ def mock_interaction():
     interaction.guild.id = 999
     interaction.guild.get_channel = MagicMock(return_value=None)
     interaction.guild.get_member = MagicMock(return_value=None)
+    interaction.channel = MagicMock()
+    interaction.channel.send = AsyncMock()
     return interaction
 
 
@@ -380,6 +382,43 @@ class TestMatchCog:
         assert modal.match_id == 7
         assert modal.reporter_side == 0
 
+    async def test_set_score_posts_public_match_result(
+        self, mock_interaction, mock_bot
+    ):
+        from bot.db import Event, EventType, Match, MatchPlayer, Player
+        from bot.db.models import Season, SeasonStatus
+
+        async with get_db_manager().get_session() as session:
+            session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+            await session.flush()
+            p1 = Player(discord_id=1, name="Alice", country="US")
+            p2 = Player(discord_id=2, name="Bob", country="US")
+            session.add_all([p1, p2])
+            await session.flush()
+            event = Event(name="Open", type=EventType.OPEN, season=1)
+            session.add(event)
+            await session.flush()
+            match = Match(event_id=event.id, series_game=1)
+            session.add(match)
+            await session.flush()
+            session.add_all(
+                [
+                    MatchPlayer(match_id=match.id, side=0, player_id=p1.id),
+                    MatchPlayer(match_id=match.id, side=1, player_id=p2.id),
+                ]
+            )
+            await session.commit()
+            match_id = match.id
+
+        cog = MatchCog(mock_bot)
+        await cog.set_score_cmd.callback(cog, mock_interaction, match_id, 3, 1)
+
+        mock_interaction.channel.send.assert_awaited_once()
+        embed = mock_interaction.channel.send.call_args.kwargs["embed"]
+        assert embed.title == "✅ Result locked in"
+        assert "Alice 3-1 Bob" in embed.description
+        assert "Admin override" in embed.footer.text
+
     async def test_set_score_playoff_creates_next_game(
         self, mock_interaction, mock_bot
     ):
@@ -415,6 +454,10 @@ class TestMatchCog:
             5,
             3,
         )
+
+        mock_interaction.channel.send.assert_awaited_once()
+        embed = mock_interaction.channel.send.call_args.kwargs["embed"]
+        assert "P1 5-3 P2" in embed.description
 
         async with get_db_manager().get_session() as session:
             from sqlalchemy import select

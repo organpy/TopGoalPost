@@ -195,6 +195,10 @@ changes.
 `/set_score_playoff` sets one BO3 game by series match ID and game number.
 `g2` and `g3` are rejected until those games exist.
 
+Both admin score commands also post the official result card in
+`score_channel` (falling back to the current channel), so admin overrides
+stay visible in the same place as player-confirmed results.
+
 `/list_matches` lists active matches by default and accepts optional
 `stage`, `status`, `round_num`, `player`, and `page` filters. It includes
 completed matches when requested and is not capped at 100.

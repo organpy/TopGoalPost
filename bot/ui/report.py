@@ -88,6 +88,30 @@ def score_report_embed(
     return embed
 
 
+def admin_score_embed(
+    *,
+    match_id: int,
+    summary: str,
+    edited: bool = False,
+) -> discord.Embed:
+    """Public result card when an admin sets or corrects a score."""
+    title = "✅ Result corrected" if edited else "✅ Result locked in"
+    description = (
+        f"### {summary}\n"
+        "Score set by a host."
+    )
+    if edited:
+        description += "\n" + subtext(
+            "Downstream matches that depended on this result were reset for rescoring."
+        )
+    return card(
+        title,
+        description,
+        color=CONFIRMED_COLOR,
+        section=f"Match #{match_id} · Admin override",
+    )
+
+
 def score_outcome_embed(
     *,
     report_id: int,
@@ -287,6 +311,44 @@ async def apply_report_action(
     await interaction.followup.send(f"Report #{report_id} {PAST_TENSE[action]}.", ephemeral=True)
 
 
+async def _resolve_score_channel(interaction: discord.Interaction):
+    """The configured score channel, or the interaction channel as fallback."""
+    score_channel_id = await Config().get_channel_id("score_channel")
+    if score_channel_id and interaction.guild:
+        channel = interaction.guild.get_channel(score_channel_id)
+        if channel is not None:
+            return channel
+    return interaction.channel
+
+
+async def publish_admin_result(
+    interaction: discord.Interaction,
+    *,
+    match_id: int,
+    summary: str,
+    edited: bool = False,
+) -> None:
+    """Post the public result card for an admin score override."""
+    channel = await _resolve_score_channel(interaction)
+    if channel is None:
+        logger.warning(
+            "No channel available to post admin result for match %s", match_id
+        )
+        return
+    try:
+        await channel.send(
+            embed=admin_score_embed(
+                match_id=match_id,
+                summary=summary,
+                edited=edited,
+            )
+        )
+    except discord.HTTPException:
+        logger.warning(
+            "Could not post admin result for match %s", match_id, exc_info=True
+        )
+
+
 async def _report_channel(client: discord.Client, report):
     if not report.channel_id:
         return None
@@ -371,13 +433,13 @@ async def _send_confirmation(
         opponent_goals=opponent_goals,
     )
 
-    channel = None
-    score_channel_id = await Config().get_channel_id("score_channel")
-    if score_channel_id and interaction.guild:
-        channel = interaction.guild.get_channel(score_channel_id)
-    if not channel:
-        # Fallback to the current channel (e.g. the match thread)
-        channel = interaction.channel
+    channel = await _resolve_score_channel(interaction)
+    if channel is None:
+        await interaction.followup.send(
+            "Could not find a channel to post the score confirmation.",
+            ephemeral=True,
+        )
+        return
 
     message = await channel.send(
         content=f"<@{opponent_discord_id}>",
