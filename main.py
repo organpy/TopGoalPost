@@ -164,9 +164,10 @@ class LeagueBot(commands.Bot):
     async def on_ready(self):
         logger.info(f"Logged in as {self.user.name} (ID: {self.user.id})")
         from bot.utils.announce import refresh_presence
-        from bot.utils.emojis import bind
+        from bot.utils.emojis import bind, load_application_emojis
 
         bind(self)
+        await load_application_emojis(self)
         await refresh_presence(self)
         logger.info("Bot is ready!")
 

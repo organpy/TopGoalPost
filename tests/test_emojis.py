@@ -10,13 +10,17 @@ from bot.utils.announce import season_close_embed, stage_announcement_embed
 
 
 class FakeBot:
-    """Only the emoji lookup used by the registry."""
+    """Only the emoji lookups used by the registry."""
 
-    def __init__(self, available):
+    def __init__(self, available, application=None):
         self.available = available
+        self.application = application or []
 
     def get_emoji(self, emoji_id):
         return self.available.get(emoji_id)
+
+    async def fetch_application_emojis(self):
+        return list(self.application)
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +59,33 @@ def test_bound_bot_uses_cached_custom_emoji():
     assert emojis.get("OPEN") == f"<:pb_open:{open_id}>"
     # Missing custom emojis still use their fallback while a bot is bound.
     assert emojis.get("SIGNUP") == "📝"
+
+
+async def test_application_emojis_are_used_when_guild_cache_misses():
+    open_id = emojis.EMOJIS["OPEN"].emoji_id
+    bot = FakeBot(
+        {},
+        application=[discord.PartialEmoji(name="pb_open", id=open_id)],
+    )
+    emojis.bind(bot)
+    await emojis.load_application_emojis(bot)
+
+    assert emojis.get("OPEN") == f"<:pb_open:{open_id}>"
+    assert emojis.get("SIGNUP") == "📝"
+
+
+async def test_application_emojis_are_cleared_on_unbind():
+    open_id = emojis.EMOJIS["OPEN"].emoji_id
+    bot = FakeBot(
+        {},
+        application=[discord.PartialEmoji(name="pb_open", id=open_id)],
+    )
+    emojis.bind(bot)
+    await emojis.load_application_emojis(bot)
+
+    emojis.unbind()
+
+    assert emojis.get("OPEN") == "🎲"
 
 
 def test_unbind_restores_fallbacks():
