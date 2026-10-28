@@ -450,13 +450,20 @@ All of these reply ephemerally, including the standings images.
 | `/add_date_timeslot day:15 start_time:19:00 finish_time:21:30` | Add a one-off date slot |
 | `/check_times target:@User` | See someone's dated + weekly slots |
 | `/remove_timeslot slot:...` | Delete a slot (autocomplete, dated or weekly) |
-| `/offer_time target:@User day:15 time:19:00 [text:...]` | Propose match time via DM |
+| `/offer_time target:@User day:15 time:19:00 [text:...]` | Send a match-time offer by DM |
 
 `day`, time, timezone and slot inputs all have autocomplete. Weekly slots are
 day-of-week based (`Wednesday 19:00–21:00`), so they repeat every week; use
 `/add_date_timeslot` for a specific date. `/offer_time text:` is admin-only —
 players may offer a time but not attach a custom message, and admins may
 target any member without a shared match.
+
+The opponent receives a DM with **Confirm**, **Counter offer**, and **Cancel**
+buttons. A counter-offer opens a small day/time form in the opponent's own
+timezone and sends the new proposal back by DM. Once either player confirms,
+both are notified and the agreed time is posted in the configured
+`agreements_channel` when one exists; otherwise it goes to `match_channel`
+(or the scheduling thread where the command was used).
 
 </details>
 
@@ -526,7 +533,7 @@ All config lives in the `settings` DB table (flat key–value). Set via
 | `match_channel` | Parent channel for match scheduling threads |
 | `score_channel` | Channel where score confirmations are posted |
 | `announcements_channel` | Public stage and season-recap announcements |
-| `agreements_channel` | Channel where agreed match times are announced |
+| `agreements_channel` | Channel where agreed match times are announced (falls back to `match_channel`) |
 | `admin_id` | Discord ID of the head admin (shown in error messages) |
 | `admin_roles` | Comma-separated role IDs allowed to use admin/host commands |
 

@@ -914,10 +914,16 @@ class TestOfferTimePermissions:
             )
 
         target.send.assert_awaited_once()
-        assert "Bring your A game" in sent["content"]
+        assert any(
+            field.name == "Message" and "Bring your A game" in field.value
+            for field in sent["embed"].fields
+        )
         # Admins bypass the shared-match requirement entirely.
         mock_interaction.response.defer.assert_awaited_once_with(ephemeral=True)
-        assert "Offered time" in mock_interaction.followup.send.call_args[0][0]
+        assert (
+            mock_interaction.followup.send.call_args.kwargs["embed"].title
+            == "📨 Offer sent"
+        )
 
 
 class TestPlayerAdmin:
@@ -1650,6 +1656,18 @@ class TestMatchConfirmView:
         await view.cancel.callback(interaction)
 
         assert view.value is False
+
+    async def test_counter_opens_modal_without_answering(self):
+        from bot.ui.scheduling import CounterOfferModal
+
+        view = self._view()
+        interaction = self._interaction()
+
+        await view.counter.callback(interaction)
+
+        assert view.value is None
+        modal = interaction.response.send_modal.call_args.args[0]
+        assert isinstance(modal, CounterOfferModal)
 
     async def test_stale_interaction_does_not_raise(self):
         """A 10062 from Discord must not lose the answer or spam a traceback."""
