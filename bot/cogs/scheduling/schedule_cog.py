@@ -4,6 +4,7 @@ set_timezone, timestamp, add_timeslot (weekly), add_date_timeslot (one-off),
 check_times, remove_timeslot and offer_time.
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo, available_timezones
@@ -19,7 +20,17 @@ from bot.rendering import ASSETS_ROOT
 from bot.services.match import MatchService
 from bot.services.scheduler import SchedulerService, WEEKDAYS
 from bot.services.season import SeasonService
-from bot.ui.scheduling import MatchConfirmView, TimestampView, WeeklyTimeslotModal
+from bot.ui.scheduling import (
+    MatchConfirmView,
+    TimestampView,
+    WeeklyTimeslotModal,
+    match_channel_embed,
+    offer_embed,
+    offer_result_embed,
+    offer_sent_embed,
+)
+
+logger = logging.getLogger(__name__)
 
 TIMEZONE_LIST_URL = "https://gist.github.com/heyalexej/8bf688fd67d7199be4a1682b3eec7568"
 
@@ -437,6 +448,265 @@ class ScheduleCog(commands.Cog):
         windows = ", ".join(f"<t:{s}:f>–<t:{f}:t>" for s, f in overlaps)
         return f"\nShared availability: {windows}"
 
+    async def _resolve_match_channel(self, interaction: discord.Interaction):
+        """Where to post a confirmed match time.
+
+        Prefer the existing ``agreements_channel`` when one is configured.
+        Otherwise use the configured ``match_channel`` (or the scheduling
+        thread the command was used in). Never fall back to an arbitrary
+        channel.
+        """
+        agreements_id = await Config().get_channel_id("agreements_channel")
+        if agreements_id:
+            channel = None
+            if interaction.guild is not None:
+                channel = interaction.guild.get_channel(agreements_id)
+            if channel is None:
+                channel = self.bot.get_channel(agreements_id)
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(agreements_id)
+                except (discord.HTTPException, AttributeError):
+                    channel = None
+            if isinstance(channel, discord.TextChannel):
+                return channel
+
+        channel_id = await Config().get_channel_id("match_channel")
+        if not channel_id:
+            return None
+
+        current = getattr(interaction, "channel", None)
+        if isinstance(current, discord.Thread) and current.parent_id == channel_id:
+            return current
+
+        parent = None
+        if interaction.guild is not None:
+            parent = interaction.guild.get_channel(channel_id)
+        if parent is None:
+            parent = self.bot.get_channel(channel_id)
+        if parent is None:
+            try:
+                parent = await self.bot.fetch_channel(channel_id)
+            except (discord.HTTPException, AttributeError):
+                parent = None
+        return parent if isinstance(parent, discord.TextChannel) else None
+
+    async def _send_offer_dm(
+        self,
+        *,
+        proposer,
+        recipient,
+        when: datetime,
+        match_id: int | None,
+        note: str | None,
+        counter: bool = False,
+    ):
+        view = MatchConfirmView(target=recipient.id)
+        message = await recipient.send(
+            embed=offer_embed(
+                proposer=proposer,
+                recipient_id=recipient.id,
+                when=when,
+                match_id=match_id,
+                note=note,
+                counter=counter,
+            ),
+            view=view,
+        )
+        return message, view
+
+    async def _run_offer_loop(
+        self,
+        interaction: discord.Interaction,
+        *,
+        proposer,
+        recipient,
+        when: datetime,
+        match_id: int | None,
+        note: str | None,
+        message,
+        view: MatchConfirmView,
+        rounds: int = 0,
+    ) -> None:
+        """Wait on a DM offer and follow counter-offers until it is settled."""
+        while True:
+            await view.wait()
+
+            if view.value is True:
+                if match_id:
+                    await self.scheduler.set_match_time(
+                        match_id, when, recipient.id
+                    )
+
+                result = offer_result_embed(
+                    status="confirmed",
+                    player_a=proposer,
+                    player_b=recipient,
+                    when=when,
+                    match_id=match_id,
+                    note=note,
+                )
+                try:
+                    await message.edit(embed=result, view=None)
+                except discord.HTTPException:
+                    logger.warning("Could not update confirmed offer DM", exc_info=True)
+
+                # The other player gets a DM; the confirmer already sees the
+                # updated DM in place.
+                try:
+                    await proposer.send(embed=result)
+                except discord.HTTPException:
+                    logger.warning(
+                        "Could not DM %s about the confirmed match time",
+                        proposer.id,
+                        exc_info=True,
+                    )
+
+                channel = await self._resolve_match_channel(interaction)
+                if channel is None:
+                    logger.warning(
+                        "Neither agreements_channel nor match_channel is "
+                        "configured; skipped public confirmation for match %s",
+                        match_id,
+                    )
+                else:
+                    try:
+                        await channel.send(
+                            content=(
+                                f"<@{proposer.id}> <@{recipient.id}>"
+                            ),
+                            embed=match_channel_embed(
+                                player_a=proposer,
+                                player_b=recipient,
+                                when=when,
+                                match_id=match_id,
+                            ),
+                        )
+                    except discord.HTTPException:
+                        logger.warning(
+                            "Could not post match confirmation for match %s",
+                            match_id,
+                            exc_info=True,
+                        )
+                return
+
+            if view.value is False:
+                result = offer_result_embed(
+                    status="cancelled",
+                    player_a=proposer,
+                    player_b=recipient,
+                    when=when,
+                    match_id=match_id,
+                    note=note,
+                )
+                try:
+                    await message.edit(embed=result, view=None)
+                except discord.HTTPException:
+                    logger.warning("Could not update cancelled offer DM", exc_info=True)
+                try:
+                    await proposer.send(embed=result)
+                except discord.HTTPException:
+                    logger.warning(
+                        "Could not DM %s about the cancelled offer",
+                        proposer.id,
+                        exc_info=True,
+                    )
+                return
+
+            if view.value == "counter" and view.counter_time is not None:
+                new_time = view.counter_time
+                new_note = view.counter_note
+
+                if rounds >= 4:
+                    limit = offer_result_embed(
+                        status="limit",
+                        player_a=proposer,
+                        player_b=recipient,
+                        when=new_time,
+                        match_id=match_id,
+                    )
+                    try:
+                        await message.edit(embed=limit, view=None)
+                    except discord.HTTPException:
+                        logger.warning(
+                            "Could not update counter-limit offer DM", exc_info=True
+                        )
+                    try:
+                        await proposer.send(embed=limit)
+                    except discord.HTTPException:
+                        logger.warning(
+                            "Could not DM %s about the counter-offer limit",
+                            proposer.id,
+                            exc_info=True,
+                        )
+                    return
+
+                counter_sent = offer_result_embed(
+                    status="countered",
+                    player_a=proposer,
+                    player_b=recipient,
+                    when=new_time,
+                    match_id=match_id,
+                    note=new_note,
+                )
+                try:
+                    await message.edit(embed=counter_sent, view=None)
+                except discord.HTTPException:
+                    logger.warning("Could not update countered offer DM", exc_info=True)
+
+                # Swap roles: the player who countered now owns the offer,
+                # and the other player gets the next DM.
+                proposer, recipient = recipient, proposer
+                when, note = new_time, new_note
+                try:
+                    message, view = await self._send_offer_dm(
+                        proposer=proposer,
+                        recipient=recipient,
+                        when=when,
+                        match_id=match_id,
+                        note=note,
+                        counter=True,
+                    )
+                except discord.HTTPException:
+                    logger.warning(
+                        "Could not deliver counter-offer to %s",
+                        recipient.id,
+                        exc_info=True,
+                    )
+                    try:
+                        await proposer.send(
+                            "I could not DM your opponent the counter-offer. "
+                            "They may have DMs disabled."
+                        )
+                    except discord.HTTPException:
+                        pass
+                    return
+                rounds += 1
+                continue
+
+            # Timeout (or an unknown view state).
+            result = offer_result_embed(
+                status="expired",
+                player_a=proposer,
+                player_b=recipient,
+                when=when,
+                match_id=match_id,
+                note=note,
+            )
+            try:
+                await message.edit(embed=result, view=None)
+            except discord.HTTPException:
+                logger.warning("Could not update expired offer DM", exc_info=True)
+            try:
+                await proposer.send(embed=result)
+            except discord.HTTPException:
+                logger.warning(
+                    "Could not DM %s about the expired offer",
+                    proposer.id,
+                    exc_info=True,
+                )
+            return
+
     @app_commands.command(name="offer_time", description="Offer a match time to another player")
     @app_commands.describe(
         target="Your opponent (admins may target anyone)",
@@ -550,16 +820,14 @@ class ScheduleCog(commands.Cog):
                 )
                 return
 
-        timestamp = int(prospective_start.timestamp())
-        view = MatchConfirmView(target=target.id)
-        content = (
-            f"<@{interaction.user.id}> wants to play your game"
-            f"{f' (Match {match_id})' if match_id else ''} at <t:{timestamp}:F>"
-        )
-        if text:
-            content += f"\n\n{text}"
         try:
-            msg = await target.send(content=content, view=view)
+            msg, view = await self._send_offer_dm(
+                proposer=interaction.user,
+                recipient=target,
+                when=prospective_start,
+                match_id=match_id,
+                note=text,
+            )
         except discord.HTTPException:
             await self._reply(
                 interaction,
@@ -568,66 +836,30 @@ class ScheduleCog(commands.Cog):
             )
             return
 
-        match_note = f" for Match {match_id}" if match_id else ""
-        await self._reply(
-            interaction,
-            f"Offered time{match_note}: <t:{timestamp}:F>"
-            + await self._overlap_hint(interaction.user.id, target.id),
-            deferred=True,
+        receipt = offer_sent_embed(
+            recipient_id=target.id,
+            when=prospective_start,
+            match_id=match_id,
         )
+        hint = await self._overlap_hint(interaction.user.id, target.id)
+        if hint:
+            receipt.add_field(
+                name="Shared availability",
+                value=hint.strip().removeprefix("Shared availability: "),
+                inline=False,
+            )
+        await interaction.followup.send(embed=receipt, ephemeral=True)
 
-        await view.wait()
-        if view.value is None:
-            try:
-                await msg.edit(
-                    content=(
-                        f"Offer timed out: game at <t:{timestamp}:F> against "
-                        f"<@{interaction.user.id}>."
-                    ),
-                    view=None,
-                )
-                await interaction.user.send(
-                    content=f"<@{target.id}> didn't respond to <t:{timestamp}:F>"
-                )
-            except discord.HTTPException:
-                pass
-        elif view.value:
-            if match_id:
-                await self.scheduler.set_match_time(
-                    match_id, prospective_start, interaction.user.id
-                )
-            try:
-                await msg.edit(
-                    content=f"Confirmed: game at <t:{timestamp}:F> against <@{interaction.user.id}>.",
-                    view=None,
-                )
-                await interaction.user.send(
-                    content=f"<@{target.id}> accepted <t:{timestamp}:F>"
-                )
-            except discord.HTTPException:
-                pass
-            cfg = Config()
-            channel_id = await cfg.get_channel_id("agreements_channel")
-            channel = self.bot.get_channel(channel_id) if channel_id else interaction.channel
-            if channel is not None:
-                try:
-                    await channel.send(
-                        f"<@{interaction.user.id}> and <@{target.id}> agreed to play"
-                        f"{f' Match {match_id}' if match_id else ''} at <t:{timestamp}:F>"
-                    )
-                except discord.HTTPException:
-                    pass
-        else:
-            try:
-                await msg.edit(
-                    content=f"Denied: game at <t:{timestamp}:F> against <@{interaction.user.id}>.",
-                    view=None,
-                )
-                await interaction.user.send(
-                    content=f"<@{target.id}> rejected <t:{timestamp}:F>"
-                )
-            except discord.HTTPException:
-                pass
+        await self._run_offer_loop(
+            interaction,
+            proposer=interaction.user,
+            recipient=target,
+            when=prospective_start,
+            match_id=match_id,
+            note=text,
+            message=msg,
+            view=view,
+        )
 
 
 async def setup(bot: commands.Bot):

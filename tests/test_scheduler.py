@@ -3,6 +3,8 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import discord
+
 from bot.cogs.scheduling.schedule_cog import parse_hhmm, resolve_local_datetime
 from bot.config import Config
 from bot.db import EventRepository, MatchRepository, MatchPlayerRepository, EventStatus
@@ -355,17 +357,25 @@ class TestMatchScheduling:
         )
         return interaction, target, bot, patches, answer
 
-    async def _offer(self, user_id, target_id, answer, match=None):
+    async def _offer(self, user_id, target_id, answer, match=None, channel=None):
+        from unittest.mock import AsyncMock, patch
+
         from bot.cogs.scheduling.schedule_cog import ScheduleCog
 
         interaction, target, bot, (host_patch, view_patch), answer = self._call(user_id, target_id, answer)
         with host_patch, view_patch as view_cls:
-            from unittest.mock import AsyncMock
-
             view_cls.return_value.wait = AsyncMock()
             view_cls.return_value.value = answer
             cog = ScheduleCog(bot)
-            await cog.offer_time.callback(cog, interaction, target, 28, "19:00", None, match)
+            if channel is None:
+                await cog.offer_time.callback(cog, interaction, target, 28, "19:00", None, match)
+            else:
+                with patch.object(
+                    cog, "_resolve_match_channel", AsyncMock(return_value=channel)
+                ):
+                    await cog.offer_time.callback(
+                        cog, interaction, target, 28, "19:00", None, match
+                    )
         return interaction
 
     @staticmethod
@@ -381,6 +391,63 @@ class TestMatchScheduling:
         scheduled = await self._scheduled(db, match_id)
         assert scheduled is not None
         assert (scheduled.day, scheduled.hour, scheduled.minute) == (28, 19, 0)
+
+    async def test_accept_dms_first_player_and_posts_match_channel(self, db):
+        from unittest.mock import AsyncMock, MagicMock
+
+        match_id = await self._setup(db)
+        channel = MagicMock()
+        channel.send = AsyncMock()
+
+        interaction = await self._offer(
+            111, 222, True, str(match_id), channel=channel
+        )
+
+        interaction.user.send.assert_awaited_once()
+        dm_embed = interaction.user.send.call_args.kwargs["embed"]
+        assert dm_embed.title == "✅ Match time confirmed"
+
+        channel.send.assert_awaited_once()
+        assert "<@111>" in channel.send.call_args.kwargs["content"]
+        assert "<@222>" in channel.send.call_args.kwargs["content"]
+        assert channel.send.call_args.kwargs["embed"].title == "🗓️ Match scheduled"
+
+    async def test_agreements_channel_takes_precedence(self, db):
+        from unittest.mock import MagicMock
+
+        from bot.cogs.scheduling.schedule_cog import ScheduleCog
+        from bot.config import Config
+
+        await Config().set("agreements_channel", "111")
+        await Config().set("match_channel", "222")
+        agreements = MagicMock(spec=discord.TextChannel)
+        match = MagicMock(spec=discord.TextChannel)
+        interaction = MagicMock()
+        interaction.channel = None
+        interaction.guild = MagicMock()
+        interaction.guild.get_channel = MagicMock(
+            side_effect=lambda cid: agreements if cid == 111 else match
+        )
+
+        cog = ScheduleCog(MagicMock())
+        assert await cog._resolve_match_channel(interaction) is agreements
+
+    async def test_match_channel_used_when_agreements_is_unset(self, db):
+        from unittest.mock import MagicMock
+
+        from bot.cogs.scheduling.schedule_cog import ScheduleCog
+        from bot.config import Config
+
+        await Config().remove("agreements_channel")
+        await Config().set("match_channel", "222")
+        match = MagicMock(spec=discord.TextChannel)
+        interaction = MagicMock()
+        interaction.channel = None
+        interaction.guild = MagicMock()
+        interaction.guild.get_channel = MagicMock(return_value=match)
+
+        cog = ScheduleCog(MagicMock())
+        assert await cog._resolve_match_channel(interaction) is match
 
     async def test_accept_without_match_option_uses_shared_match(self, db):
         match_id = await self._setup(db)

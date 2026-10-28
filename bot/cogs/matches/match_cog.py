@@ -13,7 +13,7 @@ from bot.services.match import MatchService
 from bot.services.season import SeasonService
 from bot.db import get_db_manager, MatchPlayerRepository, PlayerRepository
 from bot.ui.autocomplete import username_autocomplete
-from bot.ui.report import ReportScoreView, score_confirm_view
+from bot.ui.report import ReportScoreView, report_prompt_embed, score_confirm_view
 from bot.services.match_report import MatchReportService
 
 
@@ -145,7 +145,7 @@ class MatchCog(commands.Cog):
             return
 
         await interaction.response.send_message(
-            "Select your match, then pick the score:",
+            embed=report_prompt_embed(),
             view=ReportScoreView(matches, interaction.user.id),
             ephemeral=True,
         )

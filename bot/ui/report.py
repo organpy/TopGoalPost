@@ -20,6 +20,79 @@ REPORT_ACTIONS = {
     "dispute": ("Dispute", discord.ButtonStyle.secondary),
 }
 
+REPORT_COLOR = discord.Color.from_rgb(241, 196, 15)
+CONFIRMED_COLOR = discord.Color.from_rgb(46, 204, 113)
+REJECTED_COLOR = discord.Color.from_rgb(231, 76, 60)
+DISPUTED_COLOR = discord.Color.from_rgb(149, 165, 166)
+
+
+def report_prompt_embed() -> discord.Embed:
+    """Ephemeral /report picker header."""
+    embed = discord.Embed(
+        title="🎮 Report a match score",
+        description=(
+            "Choose your match from the menu, then use a preset score button "
+            "or **Custom score**.\n\n"
+            "Your opponent will get a confirmation request with the reported result."
+        ),
+        color=REPORT_COLOR,
+    )
+    embed.set_footer(text="Only report a score after the match is finished.")
+    return embed
+
+
+def score_report_embed(
+    *,
+    report_id: int,
+    match_id: int,
+    reporter_id: int,
+    opponent_id: int,
+    my_goals: int,
+    opponent_goals: int,
+) -> discord.Embed:
+    """Public score-confirmation card posted after /report."""
+    embed = discord.Embed(
+        title=f"🎮 Score report · Match #{match_id}",
+        description=(
+            f"<@{opponent_id}>, please confirm the score reported by "
+            f"<@{reporter_id}>."
+        ),
+        color=REPORT_COLOR,
+    )
+    embed.add_field(name="Match", value=f"#{match_id}", inline=True)
+    embed.add_field(name="Report", value=f"#{report_id}", inline=True)
+    embed.add_field(
+        name="Reported score",
+        value=(
+            f"**<@{reporter_id}> {my_goals} — {opponent_goals} "
+            f"<@{opponent_id}>**"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="Only the opponent or a moderator can resolve this report.")
+    return embed
+
+
+def score_outcome_embed(
+    *,
+    report_id: int,
+    match_id: int,
+    action: str,
+    content: str,
+) -> discord.Embed:
+    """Result card reused when a report is confirmed, rejected or disputed."""
+    meta = {
+        "confirm": ("✅ Score confirmed", CONFIRMED_COLOR),
+        "reject": ("❌ Score rejected", REJECTED_COLOR),
+        "dispute": ("⚠️ Score disputed", DISPUTED_COLOR),
+    }
+    title, color = meta.get(action, ("Score report updated", REPORT_COLOR))
+    embed = discord.Embed(title=title, description=content, color=color)
+    embed.add_field(name="Match", value=f"#{match_id}", inline=True)
+    embed.add_field(name="Report", value=f"#{report_id}", inline=True)
+    embed.set_footer(text="TopGoalPost score reports")
+    return embed
+
 
 class ReportActionButton(
     discord.ui.DynamicItem[discord.ui.Button],
@@ -118,7 +191,15 @@ async def apply_report_action(
         content = f"Score for Match {report.match_id} was **{PAST_TENSE[action]}**."
     if reason:
         content += f"\nReason: {reason}"
-    await publish_outcome(interaction.client, report, content)
+    embed = None
+    if report is not None:
+        embed = score_outcome_embed(
+            report_id=report_id,
+            match_id=report.match_id,
+            action=action,
+            content=content,
+        )
+    await publish_outcome(interaction.client, report, content, embed=embed)
 
     players = " ".join(f"<@{pid}>" for pid in await service.participants(report))
     notice = f"{players} — the score for Match {report.match_id} was {PAST_TENSE[action]}."
@@ -143,14 +224,20 @@ async def _report_channel(client: discord.Client, report):
     return channel
 
 
-async def publish_outcome(client: discord.Client, report, content: str) -> None:
+async def publish_outcome(
+    client: discord.Client,
+    report,
+    content: str,
+    *,
+    embed: discord.Embed | None = None,
+) -> None:
     """Replace the public confirmation message so stale buttons disappear."""
     channel = await _report_channel(client, report)
     if channel is None or not report.message_id:
         return
     try:
         message = await channel.fetch_message(report.message_id)
-        await message.edit(content=content, view=None)
+        await message.edit(content=content, embed=embed, view=None)
     except discord.HTTPException:
         logger.warning("Could not update report #%s message", report.id, exc_info=True)
 
@@ -193,9 +280,13 @@ async def _send_confirmation(
     report = created["report"]
     opponent_discord_id = created["opponent_discord_id"]
     view = score_confirm_view(report.id)
-    msg_content = (
-        f"<@{opponent_discord_id}>, please confirm the score for Match {match_id}:\n"
-        f"**<@{reporter_id}> reported {my_goals} - {opponent_goals}**"
+    embed = score_report_embed(
+        report_id=report.id,
+        match_id=match_id,
+        reporter_id=reporter_id,
+        opponent_id=opponent_discord_id,
+        my_goals=my_goals,
+        opponent_goals=opponent_goals,
     )
 
     channel = None
@@ -209,7 +300,11 @@ async def _send_confirmation(
         channel = interaction.channel
         reply = "Score submitted for confirmation in this channel."
 
-    message = await channel.send(content=msg_content, view=view)
+    message = await channel.send(
+        content=f"<@{opponent_discord_id}> score confirmation needed.",
+        embed=embed,
+        view=view,
+    )
     await MatchReportService().set_message(report.id, channel.id, message.id)
     await interaction.followup.send(reply, ephemeral=True)
 
