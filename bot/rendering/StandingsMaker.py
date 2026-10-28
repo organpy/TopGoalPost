@@ -81,7 +81,7 @@ async def _get_season(session, season: int | None = None) -> int:
             return int(season_str)
         except (TypeError, ValueError):
             pass
-    raise ValueError("No active season. Create one with `/season create N`.")
+    raise ValueError("No active season.")
 
 
 async def _get_event(session, event_type: EventType, season: int):

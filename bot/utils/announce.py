@@ -22,53 +22,69 @@ STAGE_LABELS = {
 STAGE_ANNOUNCEMENTS = {
     "SIGNUP": {
         "title": "📝 Signups are open",
-        "description": "A new **PBLC** season is taking entries.",
+        "description": (
+            "A brand-new **PBLC** season is on the way, and we'd love to have "
+            "you in it. Grab your spot before the bracket locks!"
+        ),
         "color": discord.Color.from_rgb(52, 152, 219),
-        "action": "Use `/signup` to join the tournament.",
+        "action": "Type `/signup` to join. It takes about ten seconds.",
         "extra": (
-            "Set your timezone with `/set_timezone` so opponents can schedule "
-            "with you."
+            "Set your timezone with `/set_timezone` so your opponents know "
+            "when you're around."
         ),
     },
     "OPEN": {
         "title": "🎲 Open stage is live",
-        "description": "The **Open** stage has begun. Every player has four matches to play.",
+        "description": (
+            "Signups are closed and the first matches are out. Everyone gets "
+            "**four games** to show what they've got. Good luck!"
+        ),
         "color": discord.Color.from_rgb(230, 126, 34),
         "action": (
-            "Use `/open` for standings, `/offer_time` to schedule, and "
-            "`/report` when a match is finished."
+            "Check where you stand with `/open`, pick a time with your "
+            "opponent using `/offer_time`, and `/report` the score once you've "
+            "played."
         ),
-        "extra": "Use `/check_times` to find shared availability with an opponent.",
+        "extra": "Not sure when your opponent is free? `/check_times` shows the overlap.",
     },
     "PLAYIN": {
         "title": "⚔️ Playins are live",
-        "description": "The **Playin** ladder is set. Score matches to climb toward Swiss.",
+        "description": (
+            "The Open stage is done, and now it's the climb. Win your playin "
+            "matches to earn a place in **Swiss**."
+        ),
         "color": discord.Color.from_rgb(155, 89, 182),
         "action": (
-            "Use `/playins` for the ladder, `/offer_time` to schedule, and "
-            "`/report` when a match is finished."
+            "See the ladder with `/playins`, set up your match with "
+            "`/offer_time`, and `/report` the result when you're done."
         ),
-        "extra": "Later rounds appear automatically as the current round finishes.",
+        "extra": "New rounds open up on their own as soon as the current one wraps.",
     },
     "SWISS": {
         "title": "🇨🇭 Swiss is live",
-        "description": "The **Swiss** stage is underway. Every round is paired from the current standings.",
+        "description": (
+            "Thirty-two players remain. Each round pairs you with someone on "
+            "the same record, so every game counts."
+        ),
         "color": discord.Color.from_rgb(46, 204, 113),
         "action": (
-            "Use `/swiss` for the bracket, `/offer_time` to schedule, and "
-            "`/report` when a match is finished."
+            "Follow the bracket with `/swiss`, agree a time using "
+            "`/offer_time`, and `/report` your score after the match."
         ),
-        "extra": "Check the bracket after each round to see your next opponent.",
+        "extra": "Look at the bracket after each round to find your next opponent.",
     },
     "PLAYOFF": {
         "title": "🏆 Playoffs are live",
-        "description": "The **Playoff** double-elimination bracket is set.",
+        "description": (
+            "This is it. The double-elimination bracket is set and only one "
+            "player walks away with the title."
+        ),
         "color": discord.Color.from_rgb(241, 196, 15),
         "action": (
-            "Use `/playoff` for the bracket, `/offer_time` to schedule, and "
-            "`/report` when a series game is finished."
+            "Find your series with `/playoff`, lock in a time using "
+            "`/offer_time`, and `/report` each game as soon as it ends."
         ),
-        "extra": "Playoff series are best-of-three; report each game as it ends.",
+        "extra": "Every series is best of three, so one bad game won't knock you out.",
     },
 }
 
@@ -107,18 +123,22 @@ def season_close_embed(
         color=discord.Color.from_rgb(241, 196, 15),
         timestamp=datetime.now(timezone.utc),
     )
-    lines = [f"**Champion:** **{champion}**"]
+    lines = [f"Congratulations to **{champion}**, our Season {season} champion! 🎉"]
     if runner_up:
-        lines.append(f"**Runner-up:** **{runner_up}**")
-    embed.description = "\n".join(lines)
+        lines.append(f"Huge respect to **{runner_up}** for a great run to the final.")
+    lines.append("Thanks to everyone who played. You made this season what it was.")
+    embed.description = "\n\n".join(lines)
     embed.add_field(
         name="Full recap",
-        value="Use `/season_summary` to see the season in full.",
+        value="Relive the season with `/season_summary`.",
         inline=False,
     )
     embed.add_field(
         name="Next season",
-        value=f"Hosts can start Season {season + 1} with `/season create {season + 1}`.",
+        value=(
+            f"Season {season + 1} is coming. Keep an eye on this channel for "
+            "signups."
+        ),
         inline=False,
     )
     embed.set_footer(text="TopGoalPost · Season recap")

@@ -165,8 +165,8 @@ class MatchReportService:
             )
             return {
                 "error": (
-                    f"Match {report.match_id} was already completed. "
-                    "Ask an admin to correct it with `/set_score`."
+                    f"Match #{report.match_id} already has a result. "
+                    "If it's wrong, ask a host to fix it."
                 )
             }
 

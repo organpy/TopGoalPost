@@ -192,8 +192,8 @@ async def test_button_rebuilt_from_custom_id_resolves_report(db):
     channel.fetch_message.assert_awaited_once_with(20)
     outcome = message.edit.call_args.kwargs
     assert outcome["content"] is None
-    assert outcome["embed"].title == "✅ Score confirmed"
-    assert "Score confirmed" in outcome["embed"].description
+    assert outcome["embed"].title == "✅ Result locked in"
+    assert "official" in outcome["embed"].description
     channel.send.assert_not_awaited()
 
 
