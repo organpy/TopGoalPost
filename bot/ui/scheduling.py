@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import discord
 
 from bot.utils.content_filter import find_vulgarity
+from bot.utils.embeds import BLUE, GREEN, GREY, ORANGE, RED, card, quote, subtext, time_block
 from bot.utils.errors import ReportingView
 from bot.utils.rate_limit import COUNTER_OFFER_LIMITER
 
@@ -89,11 +90,14 @@ def _format_minutes(minutes: int) -> str:
 
 # ── Match time offer embeds ──────────────────────────────────────────
 
-OFFER_COLOR = discord.Color.from_rgb(230, 126, 34)
-COUNTER_COLOR = discord.Color.from_rgb(52, 152, 219)
-CONFIRMED_COLOR = discord.Color.from_rgb(46, 204, 113)
-CANCELLED_COLOR = discord.Color.from_rgb(231, 76, 60)
-EXPIRED_COLOR = discord.Color.from_rgb(149, 165, 166)
+OFFER_COLOR = ORANGE
+COUNTER_COLOR = BLUE
+CONFIRMED_COLOR = GREEN
+CANCELLED_COLOR = RED
+EXPIRED_COLOR = GREY
+
+# Matches MatchConfirmView's timeout, so the countdown on the DM is honest.
+OFFER_TIMEOUT_SECONDS = 840
 
 OFFER_NEXT_STEPS = {
     "confirmed": "Have a great game, and `/report` the score when you're done.",
@@ -129,9 +133,8 @@ def _match_value(match_id: int | None) -> str:
     return f"Match #{match_id}" if match_id else "Open scheduling"
 
 
-def _time_value(when: datetime) -> str:
-    stamp = int(when.timestamp())
-    return f"<t:{stamp}:F>\n<t:{stamp}:R>"
+def _mention(user) -> str:
+    return f"<@{getattr(user, 'id', 0)}>"
 
 
 def offer_embed(
@@ -144,27 +147,34 @@ def offer_embed(
     counter: bool = False,
 ) -> discord.Embed:
     """DM card shown to the player who has to answer a time offer."""
-    title = "🔁 Counter-offer" if counter else "⏰ Match-time offer"
+    title = "🔁 How about this instead?" if counter else "⏰ Fancy a game?"
     action = (
         "suggested a different time for your match"
         if counter
-        else "would like to play your match at this time"
+        else "would like to play your match at"
     )
-    embed = discord.Embed(
-        title=title,
-        description=f"Hey <@{recipient_id}>! **{_display_name(proposer)}** {action}.",
+    expires = int(datetime.now().timestamp()) + OFFER_TIMEOUT_SECONDS
+    embed = card(
+        title,
+        (
+            f"Hey <@{recipient_id}>! **{_display_name(proposer)}** {action}:\n"
+            f"{time_block(when)}"
+        ),
         color=COUNTER_COLOR if counter else OFFER_COLOR,
-        timestamp=when,
+        section=_match_value(match_id),
+        timestamp=False,
     )
-    embed.add_field(name="Match", value=_match_value(match_id), inline=True)
-    embed.add_field(name="Proposed by", value=f"<@{getattr(proposer, 'id', 0)}>", inline=True)
-    embed.add_field(name="Proposed time", value=_time_value(when), inline=True)
+    embed.set_author(name=_display_name(proposer), icon_url=_avatar_url(proposer))
     if note:
-        embed.add_field(name="Message", value=f"> {_safe_note(note)}", inline=False)
-    avatar = _avatar_url(proposer)
-    if avatar:
-        embed.set_thumbnail(url=avatar)
-    embed.set_footer(text="Works for you? Confirm it, suggest another time, or cancel below.")
+        embed.add_field(name="Message", value=quote(_safe_note(note)), inline=False)
+    embed.add_field(
+        name="\u200b",
+        value=(
+            "**Confirm** if it works, **Counter offer** to suggest another "
+            f"time, or **Cancel**.\n{subtext(f'This offer expires <t:{expires}:R>')}"
+        ),
+        inline=False,
+    )
     return embed
 
 
@@ -175,16 +185,17 @@ def offer_sent_embed(
     match_id: int | None,
 ) -> discord.Embed:
     """Small ephemeral receipt for the player who sent the offer."""
-    embed = discord.Embed(
-        title="📨 Offer sent",
-        description=f"Your offer is on its way to <@{recipient_id}> in their DMs.",
+    return card(
+        "📨 Offer sent",
+        (
+            f"Your offer is on its way to <@{recipient_id}> in their DMs.\n"
+            f"{time_block(when)}\n"
+            + subtext("We'll DM you as soon as they answer.")
+        ),
         color=OFFER_COLOR,
-        timestamp=when,
+        section=_match_value(match_id),
+        timestamp=False,
     )
-    embed.add_field(name="Match", value=_match_value(match_id), inline=True)
-    embed.add_field(name="Proposed time", value=_time_value(when), inline=True)
-    embed.set_footer(text="We'll DM you as soon as they answer.")
-    return embed
 
 
 def offer_result_embed(
@@ -206,36 +217,20 @@ def offer_result_embed(
     }
     title, color, verb = states.get(status, states["cancelled"])
     if status == "countered":
-        description = (
-            f"<@{getattr(player_b, 'id', 0)}> sent a counter-offer to "
-            f"<@{getattr(player_a, 'id', 0)}>."
-        )
+        headline = f"{_mention(player_b)} suggested a new time to {_mention(player_a)}."
     else:
-        description = (
-            f"<@{getattr(player_a, 'id', 0)}> and "
-            f"<@{getattr(player_b, 'id', 0)}> {verb}."
-        )
-    embed = discord.Embed(
-        title=title,
-        description=description,
+        headline = f"{_mention(player_a)} vs {_mention(player_b)}: {verb}."
+    embed = card(
+        title,
+        f"{headline}\n{time_block(when)}",
         color=color,
-        timestamp=when,
-    )
-    embed.add_field(name="Match", value=_match_value(match_id), inline=True)
-    embed.add_field(name="Time", value=_time_value(when), inline=True)
-    embed.add_field(
-        name="Players",
-        value=(
-            f"<@{getattr(player_a, 'id', 0)}> · "
-            f"<@{getattr(player_b, 'id', 0)}>"
-        ),
-        inline=False,
+        section=_match_value(match_id),
+        timestamp=False,
     )
     if note:
-        embed.add_field(name="Message", value=f"> {_safe_note(note)}", inline=False)
+        embed.add_field(name="Message", value=quote(_safe_note(note)), inline=False)
     if next_step := OFFER_NEXT_STEPS.get(status):
-        embed.add_field(name="What now?", value=next_step, inline=False)
-    embed.set_footer(text="TopGoalPost scheduling")
+        embed.add_field(name="➡️ What now?", value=next_step, inline=False)
     return embed
 
 
@@ -247,20 +242,18 @@ def match_channel_embed(
     match_id: int | None,
 ) -> discord.Embed:
     """Public confirmation posted in the configured match channel/thread."""
-    embed = offer_result_embed(
-        status="confirmed",
-        player_a=player_a,
-        player_b=player_b,
-        when=when,
-        match_id=match_id,
+    embed = card(
+        "🗓️ Match scheduled",
+        (
+            f"## {_mention(player_a)} vs {_mention(player_b)}\n"
+            f"{time_block(when)}\n\n"
+            "Good luck to both, and may the best player win!"
+        ),
+        color=CONFIRMED_COLOR,
+        section=f"{_match_value(match_id)} · Confirmed via /offer_time",
+        timestamp=False,
     )
-    embed.title = "🗓️ Match scheduled"
-    embed.description = (
-        f"<@{getattr(player_a, 'id', 0)}> and "
-        f"<@{getattr(player_b, 'id', 0)}> are locked in. Good luck to both, "
-        "and may the best player win!"
-    )
-    embed.set_footer(text="Confirmed via /offer_time")
+    embed.add_field(name="➡️ After the match", value="`/report` the score", inline=False)
     return embed
 
 
@@ -432,7 +425,7 @@ class MatchConfirmView(ReportingView):
     """DM view letting the opponent confirm, counter, or cancel a time."""
 
     def __init__(self, target: int):
-        super().__init__(timeout=840)
+        super().__init__(timeout=OFFER_TIMEOUT_SECONDS)
         self.value: bool | str | None = None
         self.target = target
         self.counter_time: datetime | None = None
