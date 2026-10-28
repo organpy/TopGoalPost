@@ -21,23 +21,26 @@ def signup_panel_embed(season: int | None = None) -> discord.Embed:
     )
     embed = discord.Embed(
         title=title,
-        description="Click **Sign up** below to join the tournament.",
+        description=(
+            "Fancy a shot at the title? Hit **Sign up** below, pick your "
+            "nickname, and you're in."
+        ),
         color=discord.Color.from_rgb(52, 152, 219),
     )
     embed.add_field(
         name="Before you play",
         value=(
-            "Set your timezone with `/set_timezone` and add availability with "
-            "`/add_timeslot` or `/add_date_timeslot`."
+            "Set your timezone with `/set_timezone`, then let opponents know "
+            "when you're free with `/add_timeslot` or `/add_date_timeslot`."
         ),
         inline=False,
     )
     embed.add_field(
         name="Already registered?",
-        value="Use `/editname` or `/editcountry` to update your entry.",
+        value="You're all set! Change your details any time with `/editname` or `/editcountry`.",
         inline=False,
     )
-    embed.set_footer(text="TopGoalPost · Player signup")
+    embed.set_footer(text="TopGoalPost · See you on the pitch")
     return embed
 
 

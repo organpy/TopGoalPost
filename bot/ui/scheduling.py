@@ -96,11 +96,11 @@ CANCELLED_COLOR = discord.Color.from_rgb(231, 76, 60)
 EXPIRED_COLOR = discord.Color.from_rgb(149, 165, 166)
 
 OFFER_NEXT_STEPS = {
-    "confirmed": "Play the match, then report the score with `/report`.",
-    "cancelled": "Use `/offer_time` to propose another time.",
-    "expired": "Use `/offer_time` to send a fresh offer.",
-    "countered": "Waiting for the other player to respond.",
-    "limit": "Start a fresh offer with `/offer_time`.",
+    "confirmed": "Have a great game, and `/report` the score when you're done.",
+    "cancelled": "Try another time with `/offer_time`.",
+    "expired": "No answer this time. Send a fresh offer with `/offer_time`.",
+    "countered": "The ball's in the other player's court now.",
+    "limit": "That's a lot of back-and-forth! Start fresh with `/offer_time`.",
 }
 
 
@@ -145,10 +145,14 @@ def offer_embed(
 ) -> discord.Embed:
     """DM card shown to the player who has to answer a time offer."""
     title = "🔁 Counter-offer" if counter else "⏰ Match-time offer"
-    action = "proposed a new time for your match" if counter else "wants to schedule your match"
+    action = (
+        "suggested a different time for your match"
+        if counter
+        else "would like to play your match at this time"
+    )
     embed = discord.Embed(
         title=title,
-        description=f"<@{recipient_id}>, **{_display_name(proposer)}** {action}.",
+        description=f"Hey <@{recipient_id}>! **{_display_name(proposer)}** {action}.",
         color=COUNTER_COLOR if counter else OFFER_COLOR,
         timestamp=when,
     )
@@ -156,11 +160,11 @@ def offer_embed(
     embed.add_field(name="Proposed by", value=f"<@{getattr(proposer, 'id', 0)}>", inline=True)
     embed.add_field(name="Proposed time", value=_time_value(when), inline=True)
     if note:
-        embed.add_field(name="Message", value=_safe_note(note), inline=False)
+        embed.add_field(name="Message", value=f"> {_safe_note(note)}", inline=False)
     avatar = _avatar_url(proposer)
     if avatar:
         embed.set_thumbnail(url=avatar)
-    embed.set_footer(text="Confirm, counter, or cancel using the buttons below.")
+    embed.set_footer(text="Works for you? Confirm it, suggest another time, or cancel below.")
     return embed
 
 
@@ -173,13 +177,13 @@ def offer_sent_embed(
     """Small ephemeral receipt for the player who sent the offer."""
     embed = discord.Embed(
         title="📨 Offer sent",
-        description=f"Your time offer was sent to <@{recipient_id}> by DM.",
+        description=f"Your offer is on its way to <@{recipient_id}> in their DMs.",
         color=OFFER_COLOR,
         timestamp=when,
     )
     embed.add_field(name="Match", value=_match_value(match_id), inline=True)
     embed.add_field(name="Proposed time", value=_time_value(when), inline=True)
-    embed.set_footer(text="You will get a DM when they answer.")
+    embed.set_footer(text="We'll DM you as soon as they answer.")
     return embed
 
 
@@ -196,9 +200,9 @@ def offer_result_embed(
     states = {
         "confirmed": ("✅ Match time confirmed", CONFIRMED_COLOR, "confirmed"),
         "cancelled": ("❌ Offer cancelled", CANCELLED_COLOR, "cancelled"),
-        "expired": ("⌛ Offer expired", EXPIRED_COLOR, "did not answer in time"),
+        "expired": ("⌛ Offer expired", EXPIRED_COLOR, "didn't settle on a time"),
         "countered": ("🔁 Counter-offer sent", COUNTER_COLOR, "sent a counter-offer"),
-        "limit": ("🛑 Counter-offer limit reached", EXPIRED_COLOR, "reached the limit"),
+        "limit": ("🛑 Counter-offer limit reached", EXPIRED_COLOR, "went back and forth too many times"),
     }
     title, color, verb = states.get(status, states["cancelled"])
     if status == "countered":
@@ -228,9 +232,9 @@ def offer_result_embed(
         inline=False,
     )
     if note:
-        embed.add_field(name="Message", value=_safe_note(note), inline=False)
+        embed.add_field(name="Message", value=f"> {_safe_note(note)}", inline=False)
     if next_step := OFFER_NEXT_STEPS.get(status):
-        embed.add_field(name="Next step", value=next_step, inline=False)
+        embed.add_field(name="What now?", value=next_step, inline=False)
     embed.set_footer(text="TopGoalPost scheduling")
     return embed
 
@@ -253,7 +257,8 @@ def match_channel_embed(
     embed.title = "🗓️ Match scheduled"
     embed.description = (
         f"<@{getattr(player_a, 'id', 0)}> and "
-        f"<@{getattr(player_b, 'id', 0)}> agreed on a time. Good luck!"
+        f"<@{getattr(player_b, 'id', 0)}> are locked in. Good luck to both, "
+        "and may the best player win!"
     )
     embed.set_footer(text="Confirmed via /offer_time")
     return embed

@@ -159,7 +159,7 @@ class StatsCog(commands.Cog):
         season_num = season or await self.season_service.get_current_season_number()
         if not season_num:
             await interaction.followup.send(
-                "No active season. Create one with `!season create N`.",
+                "There's no active season right now. Check back once the next one starts!",
                 ephemeral=True,
             )
             return None
@@ -381,7 +381,7 @@ class StatsCog(commands.Cog):
         season_num = season or await self.season_service.get_current_season_number()
         if not season_num:
             await interaction.followup.send(
-                "No active season. Create one with `!season create N`.",
+                "There's no active season right now. Check back once the next one starts!",
                 ephemeral=True,
             )
             return
@@ -463,7 +463,7 @@ class StatsCog(commands.Cog):
             lines.append(line)
 
         embed = discord.Embed(
-            title="Seasons",
+            title="📚 Every season so far",
             description="\n".join(lines),
             color=discord.Color.blurple(),
         )

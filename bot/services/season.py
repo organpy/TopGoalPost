@@ -203,10 +203,7 @@ class SeasonService:
             return None
         row = await self.get_season(season)
         if row is not None and row.ended_at is not None and row.status != SeasonStatus.ARCHIVED:
-            return (
-                f"Season {season} is closed and read-only. "
-                "Start the next one with `/season create`."
-            )
+            return f"Season {season} is closed and read-only."
         return f"Season {season} is archived and read-only."
 
     async def get_season(self, number: int) -> Optional[Season]:
