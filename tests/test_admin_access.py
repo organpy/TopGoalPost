@@ -246,3 +246,41 @@ def test_host_commands_do_not_require_administrator():
         and "default_permissions(administrator=True)" in text
     ]
     assert offenders == []
+
+
+def _assert_host_checked(command):
+    checks = {getattr(check, "__name__", "") for check in command.checks}
+    assert "host_predicate" in checks or "host_predicate_app" in checks, (
+        f"{command.qualified_name} is missing a host check"
+    )
+
+
+def test_all_season_and_admin_commands_require_host():
+    """Season/admin commands must reject non-hosts even if invoked directly."""
+    from bot.cogs.admin.admin_cog import AdminCog
+    from bot.cogs.admin.dev_cog import DevCog
+    from bot.cogs.admin.player_cog import PlayerCog
+    from bot.cogs.admin.season_cog import SeasonAdminCog
+    from bot.cogs.matches.match_cog import MatchCog
+    from bot.cogs.tournament.tournament_cog import TournamentCog
+    from bot.ui.dashboard import DashboardCog
+
+    prefix_cogs = (SeasonAdminCog, AdminCog, DevCog, TournamentCog)
+    for cog in prefix_cogs:
+        for command in cog.__cog_commands__:
+            _assert_host_checked(command)
+
+    app_groups = (SeasonAdminCog.season, PlayerCog.player, TournamentCog.tourney)
+    for group in app_groups:
+        for command in group.commands:
+            _assert_host_checked(command)
+
+    for command in AdminCog.__cog_app_commands__:
+        _assert_host_checked(command)
+
+    admin_match_commands = {"list_matches", "set_score", "set_score_playoff"}
+    for command in MatchCog.__cog_app_commands__:
+        if command.name in admin_match_commands:
+            _assert_host_checked(command)
+
+    _assert_host_checked(DashboardCog.dashboard_cmd)
