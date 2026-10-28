@@ -20,6 +20,7 @@ from bot.rendering import ASSETS_ROOT
 from bot.services.match import MatchService
 from bot.services.scheduler import SchedulerService, WEEKDAYS
 from bot.services.season import SeasonService
+from bot.utils.content_filter import find_vulgarity
 from bot.ui.scheduling import (
     MatchConfirmView,
     TimestampView,
@@ -743,6 +744,13 @@ class ScheduleCog(commands.Cog):
             await self._reply(
                 interaction,
                 "Message must be 500 characters or fewer.",
+                deferred=True,
+            )
+            return
+        if text and find_vulgarity(text):
+            await self._reply(
+                interaction,
+                "Please keep offer messages respectful.",
                 deferred=True,
             )
             return

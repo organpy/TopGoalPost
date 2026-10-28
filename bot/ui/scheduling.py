@@ -4,7 +4,9 @@ from datetime import datetime, timedelta
 
 import discord
 
+from bot.utils.content_filter import find_vulgarity
 from bot.utils.errors import ReportingView
+from bot.utils.rate_limit import COUNTER_OFFER_LIMITER
 
 
 class WeeklyTimeslotModal(discord.ui.Modal, title="Add weekly availability"):
@@ -102,6 +104,13 @@ OFFER_NEXT_STEPS = {
 }
 
 
+def _safe_note(note: str | None) -> str | None:
+    """Last-resort display guard for any note that reaches an embed."""
+    if note and find_vulgarity(note):
+        return "Message hidden by the safety filter."
+    return note
+
+
 def _display_name(user) -> str:
     return (
         getattr(user, "display_name", None)
@@ -147,7 +156,7 @@ def offer_embed(
     embed.add_field(name="Proposed by", value=f"<@{getattr(proposer, 'id', 0)}>", inline=True)
     embed.add_field(name="Proposed time", value=_time_value(when), inline=True)
     if note:
-        embed.add_field(name="Message", value=note, inline=False)
+        embed.add_field(name="Message", value=_safe_note(note), inline=False)
     avatar = _avatar_url(proposer)
     if avatar:
         embed.set_thumbnail(url=avatar)
@@ -219,7 +228,7 @@ def offer_result_embed(
         inline=False,
     )
     if note:
-        embed.add_field(name="Message", value=note, inline=False)
+        embed.add_field(name="Message", value=_safe_note(note), inline=False)
     if next_step := OFFER_NEXT_STEPS.get(status):
         embed.add_field(name="Next step", value=next_step, inline=False)
     embed.set_footer(text="TopGoalPost scheduling")
@@ -287,6 +296,20 @@ class CounterOfferModal(discord.ui.Modal, title="Counter-offer a match time"):
                 "This offer is not for you.", ephemeral=True
             )
             return
+        if self.view.value is not None or self.view.counter_submitted:
+            await interaction.response.send_message(
+                "This offer was already answered.", ephemeral=True
+            )
+            return
+
+        note = self.note.value.strip() or None
+        if note and find_vulgarity(note):
+            await interaction.response.send_message(
+                "Please keep counter-offer messages respectful. "
+                "That message contains language that isn't allowed.",
+                ephemeral=True,
+            )
+            return
 
         try:
             day = int(self.day.value.strip())
@@ -335,9 +358,19 @@ class CounterOfferModal(discord.ui.Modal, title="Counter-offer a match time"):
             )
             return
 
+        retry_after = COUNTER_OFFER_LIMITER.consume(interaction.user.id)
+        if retry_after:
+            await interaction.response.send_message(
+                "You're sending counter-offers too quickly. "
+                f"Try again in {retry_after}s.",
+                ephemeral=True,
+            )
+            return
+
+        self.view.counter_submitted = True
         self.view.value = "counter"
         self.view.counter_time = when
-        self.view.counter_note = self.note.value.strip() or None
+        self.view.counter_note = note
         self.view._disable_all()
         self.view.stop()
         await interaction.response.send_message(
@@ -399,6 +432,7 @@ class MatchConfirmView(ReportingView):
         self.target = target
         self.counter_time: datetime | None = None
         self.counter_note: str | None = None
+        self.counter_submitted = False
 
     def _disable_all(self) -> None:
         for child in self.children:
@@ -459,7 +493,7 @@ class MatchConfirmView(ReportingView):
             except discord.HTTPException:
                 pass
             return
-        if self.value is not None:
+        if self.value is not None or self.counter_submitted:
             try:
                 await interaction.response.send_message(
                     "This offer was already answered.", ephemeral=True

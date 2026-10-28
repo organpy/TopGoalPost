@@ -272,20 +272,23 @@ async def apply_report_action(
             ),
         )
 
-    players = " ".join(f"<@{pid}>" for pid in await service.participants(report))
-    notice = f"The score for Match {report.match_id} was {PAST_TENSE[action]}."
-    await _notify(
-        interaction.client,
-        report,
-        players,
-        embed=score_notice_embed(
-            report_id=report_id,
-            match_id=report.match_id,
-            action=action,
-            notice=notice,
-            reason=reason,
-        ),
-    )
+    # Confirmation already updates the original public message in place. Only
+    # rejected/disputed reports need a separate notification ping.
+    if action != "confirm":
+        players = " ".join(f"<@{pid}>" for pid in await service.participants(report))
+        notice = f"The score for Match {report.match_id} was {PAST_TENSE[action]}."
+        await _notify(
+            interaction.client,
+            report,
+            players,
+            embed=score_notice_embed(
+                report_id=report_id,
+                match_id=report.match_id,
+                action=action,
+                notice=notice,
+                reason=reason,
+            ),
+        )
     await interaction.followup.send(f"Report #{report_id} {PAST_TENSE[action]}.", ephemeral=True)
 
 

@@ -14,6 +14,9 @@ from bot.db import init_db
 from bot.config import Config
 from bot.services.audit import current_actor
 from bot.utils.errors import (
+    PERMISSION_MESSAGE,
+    acknowledge_interaction,
+    consume_permission_denial,
     describe_app_command_error,
     describe_command_error,
     error_message,
@@ -121,6 +124,17 @@ class TopGoalPostBot(commands.Bot):
     async def on_command_error(self, ctx: commands.Context, error: Exception):
         if isinstance(error, commands.CommandNotFound):
             return
+        if isinstance(error, (commands.CheckFailure, commands.MissingPermissions)):
+            if not consume_permission_denial(ctx.author.id):
+                return
+            try:
+                await ctx.author.send(PERMISSION_MESSAGE)
+            except discord.HTTPException:
+                try:
+                    await ctx.send(PERMISSION_MESSAGE, delete_after=10)
+                except discord.HTTPException:
+                    pass
+            return
         message = describe_command_error(error)
         if message is None:
             error_id = log_error(f"Command '{ctx.command}'", getattr(error, "original", error))
@@ -128,6 +142,18 @@ class TopGoalPostBot(commands.Bot):
         await ctx.send(message)
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        if isinstance(error, app_commands.CommandOnCooldown):
+            await send_interaction(
+                interaction,
+                f"Slow down — try again in {error.retry_after:.0f}s.",
+            )
+            return
+        if isinstance(error, app_commands.CheckFailure):
+            if not consume_permission_denial(interaction.user.id):
+                await acknowledge_interaction(interaction)
+                return
+            await send_interaction(interaction, PERMISSION_MESSAGE)
+            return
         message = describe_app_command_error(error)
         if message is None:
             name = interaction.command.qualified_name if interaction.command else "?"

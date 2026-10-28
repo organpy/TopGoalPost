@@ -7,10 +7,26 @@ import discord
 from discord.ext import commands
 
 from bot.services.audit import current_actor
+from bot.utils.rate_limit import SlidingWindowRateLimiter
 
 logger = logging.getLogger("TopGoalPost.errors")
 
 PERMISSION_MESSAGE = "⛔ You need an administrator or host role to use this command."
+PERMISSION_DENIAL_LIMITER = SlidingWindowRateLimiter(limit=1, window_seconds=30)
+
+
+def consume_permission_denial(user_id: int) -> bool:
+    """True when this denial should be shown; False while the user is spamming."""
+    return PERMISSION_DENIAL_LIMITER.consume(user_id) == 0
+
+
+async def acknowledge_interaction(interaction: discord.Interaction) -> None:
+    """Acknowledge a blocked interaction without sending another visible reply."""
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True, thinking=False)
+    except discord.HTTPException:
+        logger.exception("Could not acknowledge interaction")
 
 
 def new_error_id() -> str:
