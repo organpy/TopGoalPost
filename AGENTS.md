@@ -30,7 +30,7 @@ Pillow for rendered standings.
 
 Slash commands are canonical. Prefix (`!`) commands remain as compatibility
 wrappers for hosts.
-
+hmd
 - **Public:** `/signup`, `/unregister`, `/status`, `/editname`, `/report`,
   `/forfeit`, `/open`, `/playins`, `/swiss`, `/playoff`, `/profile`,
   `/playercard`, `/season_summary`, `/history`, `/seasons`, scheduling
