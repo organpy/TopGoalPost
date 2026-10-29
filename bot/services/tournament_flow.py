@@ -366,6 +366,29 @@ class TournamentFlowService:
                     seen.setdefault(mp.player.discord_id, None)
         return list(seen)
 
+    async def unplayed_matchups(
+        self, season: int, stage: str
+    ) -> Optional[list[tuple[tuple[int, str], tuple[int, str]]]]:
+        """Unplayed matches in ``stage`` with both players known, as
+        ``((discord_id, name), (discord_id, name))`` pairs in match order.
+
+        None when the stage has no event (nothing generated yet).
+        """
+        etype = STAGE_EVENTS.get(stage)
+        if not etype:
+            return None
+        async with self.db.get_session() as session:
+            event = await EventRepository(session).get_by_type_and_season(etype, season)
+            if not event:
+                return None
+            matches = await MatchRepository(session).get_unplayed_by_event(event.id)
+        pairs = []
+        for match in sorted(matches, key=lambda m: m.id):
+            players = [mp.player for mp in sorted(match.match_players, key=lambda mp: mp.side)]
+            if len(players) == 2 and all(players):
+                pairs.append(tuple((p.discord_id, p.name) for p in players))
+        return pairs
+
     async def stage_discord_ids(self, season: int, stage: str) -> Optional[set[int]]:
         """Everyone taking part in ``stage`` (played or not), for stage roles.
 

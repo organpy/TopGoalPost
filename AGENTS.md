@@ -144,7 +144,7 @@ Phases are tagged `refactor-phase-N`; the pre-refactor state is
   directly; generation must succeed before the stage moves.
 - **Old-season matches:** queries for players must filter `Event.season` to
   the current season (`MatchService.active_matches_for_player`).
-- **Threads:** scheduling uses group threads named `<STAGE> scheduling #N`
+- **Threads:** scheduling uses group threads named `<Stage> · Group N`
   (`bot/utils/threads.py`). There is no per-match thread; `Match.thread_id`
   is unused.
 - **Image races:** don't `img.save()` directly into `assets/tables/`.

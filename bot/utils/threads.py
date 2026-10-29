@@ -1,9 +1,12 @@
 """Scheduling-thread helpers shared by the tournament cog, dashboard and admin cog.
 
-Scheduling uses *group* threads (`<STAGE> scheduling #N`, ~3 players each with
-overlap), not one thread per match. ``Match.thread_id`` is unused.
+Scheduling uses *group* threads (`<Stage> · Group N`, ~3 players each with
+overlap), not one thread per match. ``Match.thread_id`` is unused. Each thread
+opens with a pinned message that mentions its players (which adds them to the
+thread in one request) and lists their matchups.
 """
 
+import asyncio
 import logging
 
 import discord
@@ -62,33 +65,70 @@ def split_groups(player_ids: list[int]) -> list[list[int]]:
 
 
 def thread_name(stage: str, number: int) -> str:
-    return f"{stage} scheduling #{number}"
+    return f"{stage.title()} · Group {number}"
 
 
 def stage_threads(channel: discord.TextChannel, stage: str) -> list[discord.Thread]:
-    prefix = f"{stage} scheduling #"
-    return [t for t in channel.threads if t.name.startswith(prefix)]
+    # Older seasons used "<STAGE> scheduling #N".
+    prefixes = (f"{stage.title()} · Group ", f"{stage} scheduling #")
+    return [t for t in channel.threads if t.name.startswith(prefixes)]
+
+
+# Seconds between threads during bulk creation.
+THREAD_CREATE_DELAY = 1.0
+
+Matchup = tuple[tuple[int, str], tuple[int, str]]
+
+
+def _player_label(discord_id: int, name: str) -> str:
+    # Negative IDs are name-only placeholders without a Discord account.
+    return f"<@{discord_id}>" if discord_id > 0 else name
+
+
+def matchups_embed(stage: str, number: int, matchups: list[Matchup]) -> discord.Embed:
+    lines = [f"{_player_label(*a)} vs {_player_label(*b)}" for a, b in matchups]
+    embed = discord.Embed(
+        title=f"{stage.title()} · Group {number} matchups",
+        description="\n".join(lines)[:4096] or "No unplayed matches.",
+        color=discord.Color.blurple(),
+    )
+    embed.set_footer(text="Agree on a time here, then report the score with /report.")
+    return embed
 
 
 async def create_scheduling_threads(
-    channel: discord.TextChannel, stage: str, discord_ids: list[int]
+    channel: discord.TextChannel, stage: str, matchups: list[Matchup]
 ) -> int:
-    """Create group threads for ``stage`` and add each group's players."""
+    """Create group threads for ``stage`` with a pinned matchups message.
+
+    Players are added by mentioning them in that message rather than one
+    ``add_user`` call each, and threads are created with a short pause, to
+    stay clear of Discord rate limits.
+    """
+    discord_ids = list(dict.fromkeys(p[0] for pair in matchups for p in pair if p[0] > 0))
     created = 0
     for i, group in enumerate(split_groups(discord_ids)):
+        if i and THREAD_CREATE_DELAY:
+            await asyncio.sleep(THREAD_CREATE_DELAY)
+        members = set(group)
+        group_matchups = [m for m in matchups if m[0][0] in members or m[1][0] in members]
         try:
             thread = await channel.create_thread(
                 name=thread_name(stage, i + 1),
                 reason=f"{stage} scheduling group {i + 1}",
             )
+            message = await thread.send(
+                content=" ".join(f"<@{d}>" for d in group),
+                embed=matchups_embed(stage, i + 1, group_matchups),
+                allowed_mentions=discord.AllowedMentions(users=True),
+            )
         except discord.HTTPException:
             logger.warning("Could not create %s thread %s", stage, i + 1, exc_info=True)
             continue
-        for discord_id in group:
-            try:
-                await thread.add_user(discord.Object(discord_id))
-            except discord.HTTPException:
-                logger.warning("Could not add %s to thread %s", discord_id, thread.id)
+        try:
+            await message.pin()
+        except discord.HTTPException:
+            logger.warning("Could not pin matchups in thread %s", thread.id)
         created += 1
     return created
 
