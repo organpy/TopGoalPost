@@ -1,5 +1,6 @@
 """Tournament management cog."""
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -17,6 +18,7 @@ from bot.services.tournament_flow import TournamentFlowService, STAGE_EVENTS
 from bot.db import get_db_manager, MatchRepository, EventType, EventRepository
 from bot.ui.autocomplete import player_list_autocomplete
 from bot.utils.announce import announce_stage
+from bot.utils.roles import STATE_ROLE_KEYS, get_configured_role, stage_roles, sync_role
 from bot.utils.threads import cleanse_scheduling_threads, create_scheduling_threads
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,8 @@ class TournamentCog(commands.Cog):
         self.match_service = MatchService()
         self.signup_service = SignupService()
         self.flow_service = TournamentFlowService()
+        # Keep background role syncs referenced until they finish.
+        self._role_tasks: set[asyncio.Task] = set()
 
     @commands.group(name="tourney", invoke_without_command=True)
     @require_host()
@@ -128,38 +132,34 @@ class TournamentCog(commands.Cog):
         )
         await message.edit(content=f"Cleaned {cleaned} users from threads.")
 
-    async def _cleanup_stage_roles(self, guild: discord.Guild, previous_state: str, new_state: str):
-        from bot.config import Config
-        cfg = Config()
-        
-        # Remove all stage roles. Keep only participant role.
-        roles_to_clean = []
-        for role_key in ["open_role", "playin_role", "swiss_role", "playoff_role"]:
-            rid = await cfg.get(role_key)
-            if rid:
-                try:
-                    roles_to_clean.append(guild.get_role(int(rid)))
-                except ValueError:
-                    pass
-                    
-        roles_to_clean = [r for r in roles_to_clean if r is not None]
-        if not roles_to_clean:
-            return
-            
-        for member in guild.members:
-            to_remove = [r for r in roles_to_clean if r in member.roles]
-            if to_remove:
-                try:
-                    await member.remove_roles(*to_remove, reason=f"Stage advanced from {previous_state} to {new_state}")
-                except discord.Forbidden:
-                    logger.warning("Missing permission to remove stage roles from %s", member.id)
+    async def _sync_stage_roles(self, guild: discord.Guild, state: str, season: int) -> None:
+        """Give the new stage's role to its players and strip old stage roles."""
+        try:
+            key = STATE_ROLE_KEYS.get(state)
+            role = await get_configured_role(guild, key) if key else None
+            eligible = await self.flow_service.stage_discord_ids(season, state) or set()
+            result = await sync_role(
+                guild,
+                role,
+                eligible,
+                strip=await stage_roles(guild),
+                reason=f"Stage advanced to {state}",
+            )
+            logger.info("Stage role sync for %s: %s", state, result.summary())
+        except Exception:
+            logger.exception("Stage role sync for %s failed", state)
+
+    def _start_stage_role_sync(self, guild: discord.Guild, state: str, season: int) -> None:
+        task = asyncio.create_task(self._sync_stage_roles(guild, state, season))
+        self._role_tasks.add(task)
+        task.add_done_callback(self._role_tasks.discard)
 
     async def _run_stage(self, guild, action, season_num: int, *args) -> dict:
         """Run a flow-service stage action and clean stage roles if it advanced."""
         result = await action(season_num, *args)
         if result.get("advanced_from"):
             if guild:
-                await self._cleanup_stage_roles(guild, result["advanced_from"], result["state"])
+                self._start_stage_role_sync(guild, result["state"], season_num)
             await announce_stage(self.bot, result["state"])
         return result
 

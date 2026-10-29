@@ -492,7 +492,7 @@ both are notified and the agreed time is posted in the configured
 | `!sync_commands` | Force-resync slash commands |
 | `!getpfps` | Download registered players' avatars into `assets/pfps/` (others are never stored) |
 | `!setup_roles [prefix]` | Create missing signup/stage roles and save their IDs |
-| `!giveroles` | Assign current-stage role to eligible players |
+| `!giveroles [stage]` | Give a stage's role (signup/open/playin/swiss/playoff, default current) to all its players, strip old stage roles; paced to avoid rate limits |
 | `!signupbutton` | Post persistent signup button (SIGNUP state only) |
 | `!sync_hp` | Rebuild open HP/stats |
 | `!getleaderboard N` | Mention the top N open players |

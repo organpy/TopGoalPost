@@ -96,12 +96,12 @@ class TestTournamentCog:
         cog.flow_service.start_open = AsyncMock(
             return_value={"ok": True, "state": "OPEN", "advanced_from": "SIGNUP", "message": "done"}
         )
-        cog._cleanup_stage_roles = AsyncMock()
+        cog._start_stage_role_sync = MagicMock()
 
         await cog._open_impl(mock_ctx)
 
         cog.flow_service.start_open.assert_awaited_once_with(1)
-        cog._cleanup_stage_roles.assert_awaited_once_with(mock_ctx.guild, "SIGNUP", "OPEN")
+        cog._start_stage_role_sync.assert_called_once_with(mock_ctx.guild, "OPEN", 1)
         mock_ctx.send.assert_awaited_with("done")
 
     async def test_open_wrong_state(self, mock_ctx, mock_bot):

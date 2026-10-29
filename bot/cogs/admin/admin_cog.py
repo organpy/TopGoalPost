@@ -22,14 +22,25 @@ from bot.services.season import SeasonService
 from bot.config import Config
 from bot.rendering import StandingsMaker, ASSETS_ROOT
 from bot.rendering.cache import clear_render_cache
+from bot.utils.roles import (
+    STAGE_ROLE_KEYS,
+    STATE_ROLE_KEYS,
+    get_configured_role,
+    role_problem,
+    stage_roles,
+    sync_role,
+)
 
 logger = logging.getLogger(__name__)
 
-STAGE_EVENT_TYPES = {
-    "OPEN": "open_role",
-    "PLAYIN": "playin_role",
-    "SWISS": "swiss_role",
-    "PLAYOFF": "playoff_role",
+GIVEROLES_ALIASES = {
+    "signup": "SIGNUP",
+    "open": "OPEN",
+    "playin": "PLAYIN",
+    "playins": "PLAYIN",
+    "swiss": "SWISS",
+    "playoff": "PLAYOFF",
+    "playoffs": "PLAYOFF",
 }
 
 # Config key -> default role name created by !setup_roles.
@@ -133,87 +144,78 @@ class AdminCog(commands.Cog):
                 count += 1
         await message.edit(content=f"Downloaded {count} registered players' avatars.")
 
-    @commands.command(name="giveroles", help="Assign current stage role to eligible players")
+    @commands.command(
+        name="giveroles",
+        help="Give a stage's role to all its players and strip old stage roles "
+        "(stage: signup, open, playin, swiss, playoff; default: current)",
+    )
     @require_host()
-    async def giveroles_cmd(self, ctx: commands.Context):
+    async def giveroles_cmd(self, ctx: commands.Context, stage: Optional[str] = None):
         if not ctx.guild:
             await ctx.send("Guild only.")
             return
 
-        state = await self.season_service.get_state()
-        role_key = STAGE_EVENT_TYPES.get(state)
-        if not role_key:
-            await ctx.send(f"No stage role defined for state {state}.")
+        state = (
+            GIVEROLES_ALIASES.get(stage.strip().lower())
+            if stage
+            else await self.season_service.get_state()
+        )
+        key = STATE_ROLE_KEYS.get(state or "")
+        if not key:
+            await ctx.send(
+                f"No role for `{stage or state}`. Use one of: "
+                "signup, open, playin, swiss, playoff."
+            )
             return
 
-        cfg = Config()
-        target_role_id = await cfg.get_role_id(role_key)
-        if not target_role_id:
-            await ctx.send(f"`{role_key}` not configured. Set it via `!set_config`.")
+        role = await get_configured_role(ctx.guild, key)
+        if role is None:
+            await ctx.send(f"`{key}` is not set. Run `!setup_roles` first.")
             return
-
-        # Clear all stage roles (but NOT the signup_role)
-        stage_role_ids = set()
-        for rk in STAGE_EVENT_TYPES.values():
-            rid = await cfg.get_role_id(rk)
-            if rid:
-                stage_role_ids.add(rid)
-
-        # Collect eligible player discord IDs from unplayed matches of the current event
-        from bot.db import EventRepository, MatchRepository, PlayerRepository, EventType
-        from bot.cogs.tournament.tournament_cog import STAGE_EVENT_TYPES as STAGE_MAP
-
-        etype = STAGE_MAP.get(state)
-        if not etype:
-            await ctx.send(f"No event type for state {state}.")
-            return
+        strip = await stage_roles(ctx.guild) if key in STAGE_ROLE_KEYS else []
+        for checked in [role, *strip]:
+            problem = role_problem(ctx.guild, checked)
+            if problem:
+                await ctx.send(problem, allowed_mentions=discord.AllowedMentions.none())
+                return
 
         season_num = await self.season_service.get_current_season_number()
         if not season_num:
             await ctx.send("No active season.")
             return
-
-        eligible_discord_ids = set()
-        async with self.db.get_session() as session:
-            event = await EventRepository(session).get_by_type_and_season(etype, season_num)
-            if event:
-                matches = await MatchRepository(session).get_unplayed_by_event(event.id)
-                player_repo = PlayerRepository(session)
-                for m in matches:
-                    for mp in m.match_players:
-                        if mp.player_id:
-                            p = await player_repo.get_by_id(mp.player_id)
-                            if p:
-                                eligible_discord_ids.add(p.discord_id)
-
-        if not eligible_discord_ids:
-            await ctx.send("No eligible players found for current stage.")
+        eligible = await TournamentFlowService().stage_discord_ids(season_num, state)
+        if eligible is None:
+            await ctx.send(f"{state} hasn't been generated yet.")
             return
 
-        target_role = ctx.guild.get_role(target_role_id)
-        if not target_role:
-            await ctx.send(f"Role {target_role_id} not found.")
-            return
+        message = await ctx.send(
+            f"Syncing {role.mention} for {len(eligible)} players…",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
-        stage_roles = [r for r in [ctx.guild.get_role(rid) for rid in stage_role_ids] if r is not None]
-        added = 0
-        message = await ctx.send(f"Assigning {role_key} to eligible players...")
-        async for member in ctx.guild.fetch_members():
-            if member.id in eligible_discord_ids:
-                to_remove = [r for r in stage_roles if r != target_role and r in member.roles]
-                if to_remove:
-                    try:
-                        await member.remove_roles(*to_remove, reason="giveroles: clearing old stage roles")
-                    except discord.Forbidden:
-                        pass
-                if target_role not in member.roles:
-                    try:
-                        await member.add_roles(target_role, reason="giveroles: assigned current stage role")
-                        added += 1
-                    except discord.Forbidden:
-                        continue
+        async def progress(done: int, total: int) -> None:
+            try:
+                await message.edit(content=f"Syncing {role.mention}… {done}/{total}")
+            except discord.HTTPException:
+                pass
 
-        await message.edit(content=f"Assigned {role_key} to {added} players. Old stage roles cleared.")
+        result = await sync_role(
+            ctx.guild,
+            role,
+            eligible,
+            strip=strip,
+            reason=f"giveroles by {ctx.author}",
+            progress=progress,
+        )
+        await audit.record(
+            "roles.give", "role", role.id, actor_id=ctx.author.id,
+            stage=state, added=result.added, removed=result.removed,
+            failed=len(result.failed),
+        )
+        await message.edit(
+            content=f"**{role.mention} synced for {state}.**\n{result.summary()}",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     @commands.command(
         name="setup_roles",
