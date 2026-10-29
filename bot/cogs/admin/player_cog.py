@@ -34,6 +34,7 @@ from bot.services.season import SeasonService
 from bot.services.signup import SignupService
 from bot.ui.confirm import confirm
 from bot.utils.countries import country_choices, resolve_country
+from bot.utils.names import unsafe_name_reason
 from bot.utils.threads import sync_player_threads
 
 CLEAR_TOKENS = {"none", "clear", "-"}
@@ -41,6 +42,17 @@ CLEAR_TOKENS = {"none", "clear", "-"}
 
 def _is_clear(value: Optional[str]) -> bool:
     return (value or "").strip().lower() in CLEAR_TOKENS
+
+
+def _safe_user_name(user, fallback: str) -> str:
+    """Display name, else username, else fallback — first one that can't ping."""
+    for candidate in (
+        getattr(user, "display_name", None),
+        getattr(user, "name", None),
+    ):
+        if candidate and not unsafe_name_reason(candidate):
+            return candidate
+    return fallback
 
 
 class PlayerCog(commands.Cog):
@@ -586,20 +598,12 @@ class PlayerCog(commands.Cog):
             except Exception:
                 member = None
         if member is not None:
-            return (
-                getattr(member, "display_name", None)
-                or getattr(member, "name", None)
-                or str(discord_id)
-            )
+            return _safe_user_name(member, str(discord_id))
         try:
             user = await self.bot.fetch_user(discord_id)
         except Exception:
             return None
-        return (
-            getattr(user, "display_name", None)
-            or getattr(user, "name", None)
-            or str(discord_id)
-        )
+        return _safe_user_name(user, str(discord_id))
 
     async def _prepare_new_player(
         self, interaction: discord.Interaction, token: str, season: int
@@ -624,14 +628,12 @@ class PlayerCog(commands.Cog):
 
         member = self._find_member(interaction.guild, token)
         if member is not None:
-            name = (
-                getattr(member, "display_name", None)
-                or getattr(member, "name", None)
-                or token
-            )
-            return None, name, member.id, None
+            return None, _safe_user_name(member, str(member.id)), member.id, None
 
         # Not in the DB or the server: create a name-only placeholder.
+        error = unsafe_name_reason(token)
+        if error:
+            return None, None, None, error
         return None, token, None, None
 
     async def _create_substitute_player(

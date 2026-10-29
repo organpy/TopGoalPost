@@ -20,6 +20,7 @@ from bot.db import (
 )
 from bot.services.season import SeasonService
 from bot.utils.countries import resolve_country
+from bot.utils.names import clean_player_name
 
 
 class SignupService:
@@ -38,6 +39,10 @@ class SignupService:
         Returns:
             Tuple of (success: bool, message: str)
         """
+        name, error = clean_player_name(name)
+        if error:
+            return False, error
+
         season_num = await self.season_service.get_current_season_number()
         if not season_num:
             return False, "No active season exists."
@@ -135,8 +140,9 @@ class SignupService:
         Returns:
             Tuple of (success: bool, message: str)
         """
-        if len(new_name) < 3 or len(new_name) > 50:
-            return False, "Name must be between 3 and 50 characters."
+        new_name, error = clean_player_name(new_name)
+        if error:
+            return False, error
 
         if not force:
             season_num = await self.season_service.get_current_season_number()
