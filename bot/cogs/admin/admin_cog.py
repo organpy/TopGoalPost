@@ -81,11 +81,9 @@ class AdminCog(commands.Cog):
         )
 
     @commands.command(name="sync_commands", hidden=True)
+    @require_host()
     async def sync_commands_prefix(self, ctx: commands.Context):
         """Force-resync all application commands (prefix fallback)."""
-        if not ctx.author.guild_permissions.administrator:
-            await ctx.send("You don't have permissions to do that.")
-            return
         try:
             await ctx.send("Syncing application commands (clearing global cache and copying to guild)...")
             guild_id = os.getenv("SERVER_ID")
