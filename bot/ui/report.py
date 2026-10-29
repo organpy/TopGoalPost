@@ -22,6 +22,8 @@ REPORT_ACTIONS = {
     "dispute": ("Dispute", discord.ButtonStyle.secondary),
 }
 
+MAX_CUSTOM_GOALS = 5
+
 REPORT_COLOR = GOLD
 CONFIRMED_COLOR = GREEN
 REJECTED_COLOR = RED
@@ -448,16 +450,16 @@ class ScoreReportModal(discord.ui.Modal, title="Report Match Score"):
 
         self.my_goals = discord.ui.TextInput(
             label="Your Goals",
-            placeholder="e.g. 3",
+            placeholder=f"0-{MAX_CUSTOM_GOALS}",
             min_length=1,
-            max_length=2,
+            max_length=1,
             required=True,
         )
         self.opponent_goals = discord.ui.TextInput(
             label="Opponent's Goals",
-            placeholder="e.g. 1",
+            placeholder=f"0-{MAX_CUSTOM_GOALS}",
             min_length=1,
-            max_length=2,
+            max_length=1,
             required=True,
         )
         self.add_item(self.my_goals)
@@ -471,8 +473,10 @@ class ScoreReportModal(discord.ui.Modal, title="Report Match Score"):
             await interaction.response.send_message("Scores must be numbers.", ephemeral=True)
             return
 
-        if my_g < 0 or opp_g < 0:
-            await interaction.response.send_message("Scores cannot be negative.", ephemeral=True)
+        if not (0 <= my_g <= MAX_CUSTOM_GOALS and 0 <= opp_g <= MAX_CUSTOM_GOALS):
+            await interaction.response.send_message(
+                f"Scores must be between 0 and {MAX_CUSTOM_GOALS}.", ephemeral=True
+            )
             return
 
         if my_g == opp_g:
