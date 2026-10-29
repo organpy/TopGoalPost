@@ -55,3 +55,34 @@ def test_country_choices_filter_by_name_and_code():
     by_code = _country_choices("de")
     assert any(c.name == "Germany" for c in by_code)
     assert len(_country_choices("")) <= 25
+
+
+@pytest.mark.parametrize(
+    "value, code",
+    [
+        ("Palestine", "ps"),
+        ("Kosovo", "xk"),
+        ("Ivory Coast", "ci"),
+        ("South Sudan", "ss"),
+        ("Eswatini", "sz"),
+        ("Swaziland", "sz"),
+        ("Macedonia", "mk"),
+        ("DR Congo", "cd"),
+    ],
+)
+def test_added_and_renamed_countries_resolve(value, code):
+    assert resolve_country(value) == code
+
+
+async def test_timezone_autocomplete_matches_country_names():
+    from bot.cogs.scheduling.schedule_cog import timezone_autocomplete
+
+    choices = await timezone_autocomplete(None, "Palestine")
+    assert [c.value for c in choices] == ["Asia/Gaza", "Asia/Hebron"]
+    assert choices[0].name == "Asia/Gaza (Palestine)"
+    assert [c.value for c in await timezone_autocomplete(None, "kosovo")] == [
+        "Europe/Belgrade"
+    ]
+    assert "America/New_York" in [
+        c.value for c in await timezone_autocomplete(None, "new york")
+    ]
