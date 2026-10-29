@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 
 from bot.branding import BRANDING
-from bot.cogs.checks import require_host_app
+from bot.cogs.checks import _is_host, require_host_app
 from discord import app_commands
 from sqlalchemy import select
 
@@ -143,6 +143,16 @@ class DashboardView(ReportingView):
         self.pairing_service = PairingService()
         self.playin_service = PlayinService()
         self.flow_service = TournamentFlowService()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # The panel is ephemeral, but a leaked or forwarded message must still
+        # never let a non-host press stage buttons.
+        if not await _is_host(interaction.user, interaction.guild):
+            await interaction.response.send_message(
+                "Only hosts can use the dashboard.", ephemeral=True
+            )
+            return False
+        return await super().interaction_check(interaction)
 
     def apply_state(self, state: str) -> None:
         """Disable actions that the current stage would refuse anyway."""

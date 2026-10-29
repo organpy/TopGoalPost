@@ -284,3 +284,60 @@ def test_all_season_and_admin_commands_require_host():
             _assert_host_checked(command)
 
     _assert_host_checked(DashboardCog.dashboard_cmd)
+
+
+# Commands any registered player may run; everything else in these cogs is staff-only.
+PUBLIC_APP_COMMANDS = {"report", "forfeit"}
+
+
+def test_match_cog_staff_commands_are_gated():
+    """New commands in mixed cogs default to needing a host or moderator check."""
+    from bot.cogs.matches.match_cog import MatchCog
+
+    staff_checks = {"host_predicate_app", "moderator_predicate_app"}
+    for command in MatchCog.__cog_app_commands__:
+        if command.name in PUBLIC_APP_COMMANDS:
+            continue
+        names = {getattr(check, "__name__", "") for check in command.checks}
+        assert names & staff_checks, f"/{command.name} is missing a staff check"
+
+
+def test_setup_roles_requires_host():
+    from bot.cogs.admin.admin_cog import AdminCog
+
+    _assert_host_checked(AdminCog.setup_roles_cmd)
+
+
+class TestDashboardButtons:
+    def _interaction(self, member):
+        from unittest.mock import AsyncMock, MagicMock
+
+        interaction = MagicMock()
+        interaction.user = member
+        interaction.user.id = 5
+        interaction.guild = SimpleNamespace()
+        interaction.response = AsyncMock()
+        return interaction
+
+    async def test_non_host_is_refused(self, db):
+        from unittest.mock import MagicMock
+
+        from bot.ui.dashboard import DashboardView
+
+        view = DashboardView(MagicMock(), MagicMock())
+        interaction = self._interaction(make_member(admin=False, role_ids=(7,)))
+
+        assert await view.interaction_check(interaction) is False
+        assert "Only hosts" in interaction.response.send_message.call_args[0][0]
+
+    async def test_host_role_is_allowed(self, db):
+        from unittest.mock import MagicMock
+
+        from bot.ui.dashboard import DashboardView
+
+        await Config().set("admin_roles", "7")
+        view = DashboardView(MagicMock(), MagicMock())
+        interaction = self._interaction(make_member(admin=False, role_ids=(7,)))
+
+        assert await view.interaction_check(interaction) is True
+        interaction.response.send_message.assert_not_called()
