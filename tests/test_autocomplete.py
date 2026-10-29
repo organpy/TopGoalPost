@@ -52,3 +52,11 @@ async def test_list_autocomplete_keeps_prefix(db):
     await _seed_players(db)
     choices = await player_list_autocomplete(None, "Alice, ")
     assert [c.value for c in choices] == ["Alice, Alicia", "Alice, Bob"]
+
+
+async def test_timezone_autocomplete_lists_utc_offsets():
+    from bot.cogs.scheduling.schedule_cog import timezone_autocomplete
+
+    values = [c.value for c in await timezone_autocomplete(None, "utc+1")]
+    assert values[:6] == ["UTC+1", "UTC+10", "UTC+10:30", "UTC+11", "UTC+12", "UTC+12:45"]
+    assert "UTC-3" in [c.value for c in await timezone_autocomplete(None, "GMT-")]

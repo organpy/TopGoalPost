@@ -4,7 +4,8 @@ Manages player timezones and timeslots for scheduling matches.
 Timeslots are stored as unix epoch timestamps.
 """
 
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -31,6 +32,42 @@ WEEKDAYS = (
 )
 
 
+_UTC_OFFSET = re.compile(
+    r"^(?:utc|gmt)\s*([+-])\s*(\d{1,2})(?:[:.h]?(\d{2}))?$", re.IGNORECASE
+)
+
+
+def parse_utc_offset(text: str) -> Optional[int]:
+    """Parse 'UTC+1', 'utc-3', 'GMT+5:30' into signed minutes east of UTC."""
+    match = _UTC_OFFSET.match((text or "").strip())
+    if not match:
+        return None
+    hours, minutes = int(match.group(2)), int(match.group(3) or 0)
+    if minutes not in (0, 30, 45):
+        return None
+    total = (hours * 60 + minutes) * (-1 if match.group(1) == "-" else 1)
+    if not -12 * 60 <= total <= 14 * 60:
+        return None
+    return total
+
+
+def format_utc_offset(total_minutes: int) -> str:
+    """Canonical label, e.g. UTC+1, UTC-3, UTC+5:30."""
+    sign = "-" if total_minutes < 0 else "+"
+    hours, minutes = divmod(abs(total_minutes), 60)
+    label = f"UTC{sign}{hours}"
+    return f"{label}:{minutes:02d}" if minutes else label
+
+
+UTC_OFFSET_LABELS = tuple(
+    format_utc_offset(minutes)
+    for minutes in sorted(
+        [h * 60 for h in range(-12, 15)]
+        + [-570, -210, 210, 270, 330, 345, 390, 570, 630, 765]
+    )
+)
+
+
 def parse_weekday(text: str) -> Optional[int]:
     """Parse a weekday name or number into 0 (Monday) .. 6 (Sunday)."""
     cleaned = (text or "").strip().lower()
@@ -53,12 +90,24 @@ class SchedulerService:
         self.db = get_db_manager()
 
     @staticmethod
-    def resolve_timezone(timezone_str: str) -> Optional[ZoneInfo]:
-        """Return a ZoneInfo for the given string, or None if invalid."""
+    def resolve_timezone(timezone_str: str) -> Optional[tzinfo]:
+        """Return a tzinfo for an IANA name or UTC offset, or None if invalid."""
+        offset = parse_utc_offset(timezone_str)
+        if offset is not None:
+            return timezone(timedelta(minutes=offset), format_utc_offset(offset))
         try:
             return ZoneInfo(timezone_str)
         except (ZoneInfoNotFoundError, ValueError, KeyError):
             return None
+
+    @staticmethod
+    def normalize_timezone(timezone_str: str) -> Optional[str]:
+        """Canonical string to store ('utc+1' -> 'UTC+1'), or None if invalid."""
+        offset = parse_utc_offset(timezone_str)
+        if offset is not None:
+            return format_utc_offset(offset)
+        cleaned = (timezone_str or "").strip()
+        return cleaned if SchedulerService.resolve_timezone(cleaned) else None
 
     async def get_timezone(self, discord_id: int) -> Optional[str]:
         """Get a user's timezone string."""

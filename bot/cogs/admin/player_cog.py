@@ -188,7 +188,7 @@ class PlayerCog(commands.Cog):
         name="New display name (3-50 characters)",
         reset_name="Revert the name to the player's Discord username",
         country="Country name or 2-letter code, or 'none' to clear",
-        timezone="IANA timezone, e.g. Europe/Berlin",
+        timezone="IANA timezone or UTC offset, e.g. Europe/Berlin or UTC+1",
     )
     @app_commands.autocomplete(
         country=country_choices, timezone=timezone_autocomplete
@@ -258,9 +258,13 @@ class PlayerCog(commands.Cog):
                 )
 
         if timezone is not None:
-            if self.scheduler.resolve_timezone(timezone) is None:
-                errors.append(f"`{timezone}` is not a valid IANA timezone.")
+            normalized = self.scheduler.normalize_timezone(timezone)
+            if normalized is None:
+                errors.append(
+                    f"`{timezone}` is not a valid IANA timezone or UTC offset."
+                )
             else:
+                timezone = normalized
                 await self.scheduler.set_timezone(target.id, timezone)
                 changes.append(f"timezone: `{timezone}`")
 
