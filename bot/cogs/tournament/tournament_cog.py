@@ -9,6 +9,7 @@ from discord.ext import commands
 from discord import app_commands
 
 from bot.cogs.checks import require_host, require_host_app
+from bot.services import audit
 from bot.services.season import SeasonService
 from bot.services.pairing import PairingService
 from bot.services.playin import PlayinService
@@ -445,6 +446,34 @@ class TournamentCog(commands.Cog):
             return
         result = await self._run_stage(interaction.guild, self.flow_service.start_open, season, True)
         await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
+
+    @tourney.command(name="swap_players", description="Swap two players' Open matchups")
+    @app_commands.describe(
+        player1="Takes over player2's Open opponents",
+        player2="Takes over player1's Open opponents",
+    )
+    @require_host_app()
+    async def slash_swap_players(
+        self, interaction: discord.Interaction, player1: discord.User, player2: discord.User
+    ):
+        await interaction.response.defer(ephemeral=True)
+        season = await self.season_service.get_current_season_number()
+        if not season:
+            await interaction.followup.send("No active season.", ephemeral=True)
+            return
+        result = await self.pairing_service.swap_open_players(season, player1.id, player2.id)
+        if "error" in result:
+            await interaction.followup.send(result["error"], ephemeral=True)
+            return
+        await audit.record(
+            "open.swap_players", "player", player1.id,
+            other=player2.id, matches=result["matches"],
+        )
+        a, b = result["names"]
+        await interaction.followup.send(
+            f"Swapped **{a}** and **{b}** across {result['matches']} Open matches.",
+            ephemeral=True,
+        )
 
     @tourney.command(name="swiss_round", description="Create the Swiss bracket / show a round")
     @app_commands.describe(
