@@ -3,7 +3,7 @@
 import random
 from typing import Optional
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, literal_column
 from sqlalchemy.orm import selectinload
 
 from bot.db import (
@@ -13,6 +13,7 @@ from bot.db import (
     MatchPlayer,
     EventType,
     EventStatus,
+    PlayerSeason,
     PlayerSeasonRepository,
     EventRepository,
     MatchRepository,
@@ -223,6 +224,18 @@ for src, adv in ADVANCEMENT_MAP.items():
             ADVANCEMENT_REVERSE_MAP.setdefault(dest_slot, []).append((src, outcome, side))
 
 
+
+def open_ring_pairs(ring: list[int]) -> list[tuple[int, int]]:
+    """Each player vs the 2 neighbours on each side of the ring, in ring order.
+
+    With 5+ players everyone gets exactly 4 matches, 2 as each side.
+    Smaller fields get a plain round robin.
+    """
+    n = len(ring)
+    if n < 5:
+        return [(ring[i], ring[j]) for i in range(n) for j in range(i + 1, n)]
+    return [(ring[i], ring[(i + step) % n]) for i in range(n) for step in (1, 2)]
+
 class PairingService:
     def __init__(self):
         self.db = get_db_manager()
@@ -319,11 +332,24 @@ class PairingService:
             bye = leftovers[0] if leftovers else None
             return len(pairings), history, bye, None
 
-    async def generate_open(self, season: int) -> tuple[int, int, Optional[str]]:
-        """Generate all Open stage matches: 4 matches per player, all at once.
+    async def delete_open(self, season: int) -> int:
+        """Delete every Open match of ``season``. Returns how many were deleted."""
+        async with self.db.get_session() as session:
+            event = await EventRepository(session).get_by_type_and_season(EventType.OPEN, season)
+            if not event:
+                return 0
+            matches = await MatchRepository(session).get_by_event(event.id)
+            for match in matches:
+                await session.delete(match)
+            await session.commit()
+            return len(matches)
 
-        Each player is paired against 4 different opponents using repeated
-        rounds of random pairing with rematch avoidance.
+    async def generate_open(self, season: int) -> tuple[int, int, Optional[str]]:
+        """Generate all Open stage matches at once.
+
+        Players sit in a ring in signup order; each plays the two players on
+        their left and the two on their right, so everyone gets exactly 4
+        matches (2 on each side). Fields under 5 play a round robin instead.
 
         Returns (total_matches_created, total_players, error_message).
         """
@@ -336,24 +362,29 @@ class PairingService:
             if unfinished:
                 return len(unfinished), 0, None  # already generated, just report what exists
 
-        history: set[tuple[int, int]] = set()
-        total_matches = 0
-        for _ in range(4):
-            created, history, bye, err = await self._pair_open_round(eid, history)
-            if created == 0:
-                break
-            total_matches += created
+            # rowid is insertion order, i.e. signup order.
+            stmt = (
+                select(PlayerSeason)
+                .where(PlayerSeason.season_number == season)
+                .order_by(literal_column("player_seasons.rowid"))
+            )
+            all_ps = (await session.execute(stmt)).scalars().all()
+            ring = [
+                ps.player_id for ps in all_ps
+                if ps.hp > 0 and (ps.swiss_seed is None or ps.swiss_seed == 0)
+            ]
+            if len(ring) < 2:
+                return 0, 0, "Not enough active players in open stage."
 
-        if total_matches == 0:
-            return 0, 0, "Could not create any open matches."
-
-        async with self.db.get_session() as session:
-            ps_repo = PlayerSeasonRepository(session)
-            all_ps = await ps_repo.get_by_season(season)
-            active = len([ps for ps in all_ps if ps.hp > 0 and (ps.swiss_seed is None or ps.swiss_seed == 0)])
+            for p1, p2 in open_ring_pairs(ring):
+                match = Match(event_id=eid)
+                session.add(match)
+                await session.flush()
+                session.add(MatchPlayer(match_id=match.id, side=0, player_id=p1))
+                session.add(MatchPlayer(match_id=match.id, side=1, player_id=p2))
             await session.commit()
 
-        return total_matches, active, None
+        return len(open_ring_pairs(ring)), len(ring), None
 
     @staticmethod
     def _swiss_round(match: Match) -> int:

@@ -17,6 +17,7 @@ from bot.services.signup import SignupService
 from bot.services.tournament_flow import TournamentFlowService, STAGE_EVENTS
 from bot.db import get_db_manager, MatchRepository, EventType, EventRepository
 from bot.ui.autocomplete import player_list_autocomplete
+from bot.ui.confirm import confirm
 from bot.utils.announce import announce_stage
 from bot.utils.roles import STATE_ROLE_KEYS, get_configured_role, stage_roles, sync_role
 from bot.utils.threads import cleanse_scheduling_threads, create_scheduling_threads
@@ -422,9 +423,28 @@ class TournamentCog(commands.Cog):
         await interaction.followup.send("\n".join(lines), ephemeral=True)
 
     @tourney.command(name="generate_open", description="Create / regenerate Open matches (4 per player)")
+    @app_commands.describe(
+        regenerate="Delete all Open matches (including played ones) and pair again",
+    )
     @require_host_app()
-    async def slash_generate_open(self, interaction: discord.Interaction):
-        await self._stage_slash(interaction, self.flow_service.start_open)
+    async def slash_generate_open(self, interaction: discord.Interaction, regenerate: bool = False):
+        if not regenerate:
+            await self._stage_slash(interaction, self.flow_service.start_open)
+            return
+        await interaction.response.defer(ephemeral=True)
+        if not await confirm(
+            interaction,
+            "Delete **every** Open match this season, including played results, "
+            "and generate new pairings?",
+        ):
+            await interaction.followup.send("Cancelled.", ephemeral=True)
+            return
+        season = await self.season_service.get_current_season_number()
+        if not season:
+            await interaction.followup.send("No active season.", ephemeral=True)
+            return
+        result = await self._run_stage(interaction.guild, self.flow_service.start_open, season, True)
+        await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
 
     @tourney.command(name="swiss_round", description="Create the Swiss bracket / show a round")
     @app_commands.describe(

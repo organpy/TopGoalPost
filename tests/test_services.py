@@ -2661,3 +2661,71 @@ class TestGrandFinalResetCleanup:
             await session.commit()
 
         assert await self._slot_count(db, event_id, "GF-M2") == 1
+
+
+def test_open_ring_gives_two_left_and_two_right():
+    from collections import Counter
+
+    from bot.services.pairing import open_ring_pairs
+
+    for n in (5, 6, 7, 32, 33):
+        ring = list(range(n))
+        pairs = open_ring_pairs(ring)
+        assert len({frozenset(p) for p in pairs}) == len(pairs) == 2 * n
+        for i in ring:
+            opponents = {b for a, b in pairs if a == i} | {a for a, b in pairs if b == i}
+            assert opponents == {(i - 2) % n, (i - 1) % n, (i + 1) % n, (i + 2) % n}
+        assert Counter(a for a, _ in pairs) == Counter(b for _, b in pairs) == Counter({i: 2 for i in ring})
+
+    assert open_ring_pairs([1, 2, 3]) == [(1, 2), (1, 3), (2, 3)]
+
+
+async def test_generate_open_uses_signup_order_ring(db, seed_data):
+    from bot.services.pairing import PairingService
+
+    ids = [p.id for p in seed_data["players"]]
+    created, players, err = await PairingService().generate_open(1)
+    assert (created, players, err) == (16, 8, None)
+
+    async with db.get_session() as session:
+        event = await EventRepository(session).get_by_type_and_season(EventType.OPEN, 1)
+        matches = await MatchRepository(session).get_by_event(event.id)
+    pairs = [tuple(mp.player_id for mp in sorted(m.match_players, key=lambda mp: mp.side)) for m in matches]
+    assert pairs[:4] == [(ids[0], ids[1]), (ids[0], ids[2]), (ids[1], ids[2]), (ids[1], ids[3])]
+    assert pairs[-2:] == [(ids[7], ids[0]), (ids[7], ids[1])]
+
+
+async def test_regenerate_open_replaces_played_matches_and_resets_hp(db, seed_data, open_event):
+    from datetime import datetime
+
+    from bot.config import Config
+    from bot.services.tournament_flow import TournamentFlowService
+
+    p = seed_data["players"]
+    await Config().set_season_state("OPEN")
+    async with db.get_session() as session:
+        old = Match(event_id=open_event.id, completed_at=datetime.utcnow())
+        session.add(old)
+        await session.flush()
+        session.add_all([
+            MatchPlayer(match_id=old.id, player_id=p[0].id, side=0, goals=5, is_winner=True),
+            MatchPlayer(match_id=old.id, player_id=p[1].id, side=1, goals=0),
+        ])
+        loser = await PlayerSeasonRepository(session).get(player_id=p[1].id, season_number=1)
+        loser.hp = 0
+        await session.commit()
+    event_id = open_event.id
+
+    flow = TournamentFlowService()
+    kept = await flow.start_open(1)
+    assert "nothing regenerated" in kept["message"]
+
+    result = await flow.start_open(1, True)
+    assert result["ok"] and result["matches_created"] == 16
+
+    async with db.get_session() as session:
+        matches = await MatchRepository(session).get_by_event(event_id)
+        loser = await PlayerSeasonRepository(session).get(player_id=p[1].id, season_number=1)
+    assert len(matches) == 16
+    assert not any(m.completed_at for m in matches)
+    assert loser.hp == 4

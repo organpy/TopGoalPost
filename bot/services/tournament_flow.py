@@ -15,6 +15,7 @@ from bot.db import (
     EventRepository,
     MatchRepository,
 )
+from bot.services import audit
 from bot.services.season import SeasonService, next_state
 from bot.services.season_results import get_season_result
 from bot.services.match import MatchService
@@ -173,13 +174,25 @@ class TournamentFlowService:
             "state": state,
         }
 
-    async def start_open(self, season: int) -> dict[str, Any]:
-        """Generate the Open stage, then move SIGNUP → OPEN."""
+    async def start_open(self, season: int, regenerate: bool = False) -> dict[str, Any]:
+        """Generate the Open stage, then move SIGNUP → OPEN.
+
+        ``regenerate`` deletes every existing Open match (played ones too)
+        and builds the pairings again.
+        """
         if err := await self._require_state(("SIGNUP", "OPEN")):
             return err
 
         existing = await self._event_match_counts(season, EventType.OPEN)
-        if existing["total"]:
+        if existing["total"] and regenerate:
+            await self.pairing_service.delete_open(season)
+            # Old results fed open_wins/hp live; reset them so nobody is left out.
+            await self.sync_open_stats(season)
+            await audit.record(
+                "stage.open_regenerate", "season", season,
+                deleted=existing["total"], played=existing["completed"],
+            )
+        elif existing["total"]:
             return {
                 "ok": True,
                 "state": await self.season_service.get_state(),
