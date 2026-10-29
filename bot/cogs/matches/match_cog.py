@@ -13,7 +13,12 @@ from bot.services.match import MatchService
 from bot.services.season import SeasonService
 from bot.db import get_db_manager, MatchPlayerRepository, PlayerRepository
 from bot.ui.autocomplete import username_autocomplete
-from bot.ui.report import ReportScoreView, report_prompt_embed, score_confirm_view
+from bot.ui.report import (
+    ReportScoreView,
+    publish_admin_result,
+    report_prompt_embed,
+    score_confirm_view,
+)
 from bot.services.match_report import MatchReportService
 
 
@@ -260,10 +265,17 @@ class MatchCog(commands.Cog):
             await interaction.followup.send(f"Failed to set score: {result['error']}", ephemeral=True)
         else:
             summary = await self.match_service.format_result_summary(match_id)
+            edited = bool(result.get("edited"))
             suffix = (
                 "\nDependent downstream matches were reset for rescoring."
-                if result.get("edited")
+                if edited
                 else ""
+            )
+            await publish_admin_result(
+                interaction,
+                match_id=match_id,
+                summary=summary,
+                edited=edited,
             )
             await interaction.followup.send(
                 f"Admin override: {summary}{suffix}",
@@ -360,10 +372,17 @@ class MatchCog(commands.Cog):
             return
 
         summary = await self.match_service.format_result_summary(target_id)
+        edited = bool(result.get("edited"))
         suffix = (
             "\nDependent downstream matches were reset for rescoring."
-            if result.get("edited")
+            if edited
             else ""
+        )
+        await publish_admin_result(
+            interaction,
+            match_id=target_id,
+            summary=summary,
+            edited=edited,
         )
         await interaction.followup.send(
             f"Admin override: {summary}{suffix}",
