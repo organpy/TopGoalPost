@@ -2,7 +2,6 @@
 
 import io
 import os
-import time
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -14,6 +13,7 @@ from bot.services.player_stats import PlayerStatsService
 from bot.services.season import SeasonService
 from bot.ui.autocomplete import season_autocomplete
 from bot.utils.errors import report_interaction_error
+from bot.utils.rate_limit import SlidingWindowRateLimiter
 
 
 class StandingsCog(commands.Cog):
@@ -21,7 +21,9 @@ class StandingsCog(commands.Cog):
         self.bot = bot
         self.season_service = SeasonService()
         self.stats_service = PlayerStatsService()
-        self._bracket_cooldowns: dict[tuple[int, str], float] = {}
+        self._standings_limiter = SlidingWindowRateLimiter(
+            limit=1, window_seconds=5
+        )
 
     async def _send_standings(
         self,
@@ -30,18 +32,16 @@ class StandingsCog(commands.Cog):
         view: str = "full",
         season: int = None,
     ):
-        now = time.monotonic()
-        key = (interaction.user.id, phase)
-        last = self._bracket_cooldowns.get(key)
-        if last is not None and now - last < 5:
-            wait = 5 - (now - last)
-            msg = f"⏳ Try again in {wait:.1f}s."
+        retry_after = self._standings_limiter.consume(
+            (interaction.user.id, phase)
+        )
+        if retry_after:
+            msg = f"⏳ Try again in {retry_after}s."
             if interaction.response.is_done():
                 await interaction.followup.send(msg, ephemeral=True)
             else:
                 await interaction.response.send_message(msg, ephemeral=True)
             return
-        self._bracket_cooldowns[key] = now
 
         await interaction.response.defer()
 

@@ -449,7 +449,10 @@ class ImageCacheRepository:
         return row.link if row else None
 
     async def set(self, hash: str, link: str) -> None:
+        # A rendered file has one current content hash. Drop stale mappings to
+        # the same path so a later revert cannot serve newer pixels.
         await self.delete(hash)
+        await self.session.execute(delete(ImageCache).where(ImageCache.link == link))
         cache = ImageCache(hash=hash, link=link)
         self.session.add(cache)
         await self.session.flush()
@@ -457,6 +460,10 @@ class ImageCacheRepository:
     async def delete(self, hash: str) -> None:
         stmt = delete(ImageCache).where(ImageCache.hash == hash)
         await self.session.execute(stmt)
+
+    async def count(self) -> int:
+        stmt = select(func.count()).select_from(ImageCache)
+        return int((await self.session.execute(stmt)).scalar_one())
 
     async def delete_all(self) -> None:
         stmt = delete(ImageCache)

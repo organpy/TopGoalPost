@@ -883,6 +883,49 @@ async def test_open_renders_one_file_per_season(db, tmp_path, monkeypatch):
     assert (tmp_path / "open_s2.png").stat().st_size > 0
 
 
+async def test_render_cache_reuses_files_and_clears_safely(db, tmp_path):
+    from bot.rendering.cache import (
+        clear_render_cache,
+        get_cached_render,
+        render_cache_key,
+        store_render,
+    )
+
+    target = tmp_path / "card.png"
+    other_target = tmp_path / "other.png"
+    target.write_bytes(b"rendered")
+    other_target.write_bytes(b"rendered")
+    key = render_cache_key("test-card", {"player": 1})
+    other_key = render_cache_key("test-card", {"player": 2})
+    replacement_key = render_cache_key("test-card", {"player": 3})
+
+    assert len({key, other_key, replacement_key}) == 3
+    assert await get_cached_render(key) is None
+
+    await store_render(key, str(target))
+    assert await get_cached_render(key) == str(target)
+
+    target.unlink()
+    assert await get_cached_render(key) is None
+    async with db.get_session() as session:
+        assert await ImageCacheRepository(session).get(key) is None
+
+    target.write_bytes(b"rendered")
+    await store_render(key, str(target))
+    await store_render(other_key, str(other_target))
+    assert await get_cached_render(key) == str(target)
+    assert await get_cached_render(other_key) == str(other_target)
+
+    # Re-rendering the same path replaces its old content mapping.
+    await store_render(replacement_key, str(target))
+    assert await get_cached_render(key) is None
+    assert await get_cached_render(replacement_key) == str(target)
+
+    assert await clear_render_cache() == 2
+    assert await get_cached_render(replacement_key) is None
+    assert await get_cached_render(other_key) is None
+
+
 def test_concurrent_atomic_saves_leave_a_valid_png(tmp_path):
     """Two threads writing the same image never leave a partial file behind."""
     from concurrent.futures import ThreadPoolExecutor
