@@ -491,6 +491,7 @@ both are notified and the agreed time is posted in the configured
 | `!resetimages` | Prefix alias for `/reset_cache` |
 | `!sync_commands` | Force-resync slash commands |
 | `!getpfps` | Download registered players' avatars into `assets/pfps/` (others are never stored) |
+| `!setup_roles [prefix]` | Create missing signup/stage roles and save their IDs |
 | `!giveroles` | Assign current-stage role to eligible players |
 | `!signupbutton` | Post persistent signup button (SIGNUP state only) |
 | `!sync_hp` | Rebuild open HP/stats |
