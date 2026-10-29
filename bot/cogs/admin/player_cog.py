@@ -21,6 +21,8 @@ from bot.cogs.scheduling.schedule_cog import (
     time_autocomplete,
     timezone_autocomplete,
 )
+from bot.rendering import ASSETS_ROOT
+from bot.services import audit
 from bot.ui.autocomplete import season_autocomplete, username_autocomplete
 from bot.db import (
     get_db_manager,
@@ -35,6 +37,7 @@ from bot.services.signup import SignupService
 from bot.ui.confirm import confirm
 from bot.utils.countries import country_choices, resolve_country
 from bot.utils.names import clean_player_name, unsafe_name_reason
+from bot.utils.roles import set_member_role
 from bot.utils.threads import sync_player_threads
 
 CLEAR_TOKENS = {"none", "clear", "-"}
@@ -276,6 +279,69 @@ class PlayerCog(commands.Cog):
             lines.append("**Errors:**")
             lines.extend(f"• {error}" for error in errors)
         await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+    @player.command(name="add", description="Sign a player up for the current season")
+    @app_commands.describe(
+        target="The player (pick them or paste their Discord ID)",
+        name="Display name (defaults to their Discord name)",
+        country="Country name or 2-letter code",
+        timezone="IANA timezone or UTC offset, e.g. Europe/Berlin or UTC+1",
+    )
+    @app_commands.autocomplete(
+        country=country_choices, timezone=timezone_autocomplete
+    )
+    @require_host_app()
+    async def add_cmd(
+        self,
+        interaction: discord.Interaction,
+        target: discord.User,
+        name: Optional[str] = None,
+        country: Optional[str] = None,
+        timezone: Optional[str] = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        code = resolve_country(country) if country else None
+        if country and not code:
+            await interaction.followup.send(f"Unknown country `{country}`.", ephemeral=True)
+            return
+        normalized_tz = self.scheduler.normalize_timezone(timezone) if timezone else None
+        if timezone and not normalized_tz:
+            await interaction.followup.send(
+                f"`{timezone}` is not a valid IANA timezone or UTC offset.", ephemeral=True
+            )
+            return
+
+        name = name or _safe_user_name(target, str(target.id))
+        ok, msg = await self.signup_service.register(target.id, name, code)
+        if not ok:
+            if "already registered" in msg:
+                msg = f"{target.mention} is already registered."
+            await interaction.followup.send(msg, ephemeral=True)
+            return
+
+        if normalized_tz:
+            await self.scheduler.set_timezone(target.id, normalized_tz)
+        try:
+            pfp_dir = ASSETS_ROOT / "pfps"
+            pfp_dir.mkdir(parents=True, exist_ok=True)
+            await target.display_avatar.save(fp=str(pfp_dir / f"{target.id}.png"))
+        except Exception:
+            pass
+        if isinstance(target, discord.Member):
+            await set_member_role(target, "signup_role", True, "Added by a host")
+        await audit.record(
+            "player.add", "player", target.id,
+            name=clean_player_name(name)[0], country=code, timezone=normalized_tz,
+        )
+
+        details = [f"name `{clean_player_name(name)[0]}`"]
+        if code:
+            details.append(f"country `{code.upper()}`")
+        if normalized_tz:
+            details.append(f"timezone `{normalized_tz}`")
+        await interaction.followup.send(
+            f"Added {target.mention}: {', '.join(details)}.", ephemeral=True
+        )
 
     # ── stats ─────────────────────────────────────────────────
 

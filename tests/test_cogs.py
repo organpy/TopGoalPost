@@ -415,8 +415,8 @@ class TestMatchCog:
 
         mock_interaction.channel.send.assert_awaited_once()
         embed = mock_interaction.channel.send.call_args.kwargs["embed"]
-        assert embed.title == "✅ Result locked in"
-        assert "Alice 3-1 Bob" in embed.description
+        assert embed.title == "Score set"
+        assert "Alice **3 - 1** Bob" in embed.description
         assert "Admin override" in embed.footer.text
 
     async def test_set_score_playoff_creates_next_game(
@@ -457,7 +457,7 @@ class TestMatchCog:
 
         mock_interaction.channel.send.assert_awaited_once()
         embed = mock_interaction.channel.send.call_args.kwargs["embed"]
-        assert "P1 5-3 P2" in embed.description
+        assert "P1 **5 - 3** P2" in embed.description
 
         async with get_db_manager().get_session() as session:
             from sqlalchemy import select
@@ -1065,12 +1065,43 @@ class TestPlayerAdmin:
 
         names = {cmd.name for cmd in PlayerCog.player.commands}
         assert names == {
-            "info", "set", "stats", "add_weekly", "add_date", "remove_slot",
+            "info", "set", "add", "stats", "add_weekly", "add_date", "remove_slot",
             "clear_slots", "remove_from_matches", "delete_matches",
             "forfeit_all", "substitute", "reset_matches", "switch_id",
         }
         for cmd in PlayerCog.player.commands:
             assert cmd.checks, f"{cmd.name} is missing require_host_app"
+
+    async def test_add_registers_player_with_country_and_timezone(
+        self, mock_interaction, mock_bot
+    ):
+        from bot.cogs.admin.player_cog import PlayerCog
+        from bot.config import Config
+        from bot.db.models import Season, SeasonStatus
+        from bot.services.scheduler import SchedulerService
+        from bot.services.signup import SignupService
+
+        async with get_db_manager().get_session() as session:
+            session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+            await session.commit()
+        await Config().set_season_state("SIGNUP")
+
+        cog = PlayerCog(mock_bot)
+        target = self._target(77)
+        target.display_avatar.save = AsyncMock()
+        await cog.add_cmd.callback(
+            cog, mock_interaction, target, "NewGuy", "de", "Europe/Berlin"
+        )
+
+        assert await SignupService().is_registered(77)
+        assert await SchedulerService().get_timezone(77) == "Europe/Berlin"
+        async with get_db_manager().get_session() as session:
+            player = await PlayerRepository(session).get_by_discord_id(77)
+        assert (player.name, player.country) == ("NewGuy", "de")
+        assert "Added <@77>" in mock_interaction.followup.send.call_args[0][0]
+
+        await cog.add_cmd.callback(cog, mock_interaction, target, "NewGuy")
+        assert "already registered" in mock_interaction.followup.send.call_args[0][0]
 
     async def test_info_shows_identity_and_availability(
         self, mock_interaction, mock_bot

@@ -28,17 +28,16 @@ REJECTED_COLOR = RED
 DISPUTED_COLOR = GREY
 
 REPORT_NEXT_STEPS = {
-    "confirm": "It's in the books. Check the standings or bracket to see who's next.",
-    "reject": "No worries. Send the correct score with `/report`.",
-    "dispute": "A moderator will take a look and sort it out.",
-    "error": "Give it another try. If it keeps happening, let a host know.",
+    "reject": "Report the correct score with `/report`.",
+    "dispute": "A moderator will review it.",
+    "error": "Try again, or ask a host.",
 }
 
 OUTCOME_TITLES = {
-    "confirm": ("✅ Result locked in", CONFIRMED_COLOR),
-    "reject": ("❌ Score rejected", REJECTED_COLOR),
-    "dispute": ("⚠️ Score under review", DISPUTED_COLOR),
-    "error": ("⚠️ That score couldn't be saved", REJECTED_COLOR),
+    "confirm": ("Score confirmed", CONFIRMED_COLOR),
+    "reject": ("Score rejected", REJECTED_COLOR),
+    "dispute": ("Score disputed", DISPUTED_COLOR),
+    "error": ("Score not saved", REJECTED_COLOR),
 }
 
 
@@ -72,19 +71,12 @@ def score_report_embed(
     embed = card(
         f"{emoji('REPORT')} Final score check",
         (
-            f"## <@{reporter_id}> {my_goals} – {opponent_goals} <@{opponent_id}>\n"
-            f"Hey <@{opponent_id}>, does this look right?\n"
-            + subtext(
-                f"Reported by <@{reporter_id}> · only your opponent or a "
-                "moderator can answer"
-            )
+            f"<@{reporter_id}> **{my_goals} - {opponent_goals}** <@{opponent_id}>\n"
+            + subtext(f"<@{opponent_id}> or a moderator must confirm")
         ),
         color=REPORT_COLOR,
         section=f"Match #{match_id} · Report #{report_id}",
     )
-    embed.add_field(name="✅ Correct", value="Hit **Confirm**", inline=True)
-    embed.add_field(name="✏️ Wrong", value="**Reject** it", inline=True)
-    embed.add_field(name="🧑‍⚖️ Unsure", value="**Dispute** it", inline=True)
     return embed
 
 
@@ -95,15 +87,10 @@ def admin_score_embed(
     edited: bool = False,
 ) -> discord.Embed:
     """Public result card when an admin sets or corrects a score."""
-    title = "✅ Result corrected" if edited else "✅ Result locked in"
-    description = (
-        f"### {summary}\n"
-        "Score set by a host."
-    )
+    title = "Score corrected" if edited else "Score set"
+    description = f"{summary}\n" + subtext("Set by a host")
     if edited:
-        description += "\n" + subtext(
-            "Downstream matches that depended on this result were reset for rescoring."
-        )
+        description += "\n" + subtext("Dependent matches were reset")
     return card(
         title,
         description,
@@ -128,7 +115,7 @@ def score_outcome_embed(
         section=f"Match #{match_id} · Report #{report_id}",
     )
     if next_step := REPORT_NEXT_STEPS.get(action):
-        embed.add_field(name="➡️ What now?", value=next_step, inline=False)
+        embed.description += "\n" + subtext(next_step)
     return embed
 
 
@@ -149,9 +136,9 @@ def score_notice_embed(
         section=f"Match #{match_id} · Report #{report_id}",
     )
     if reason:
-        embed.add_field(name="💬 Reason given", value=quote(reason), inline=False)
+        embed.description += "\n" + quote(reason)
     if next_step := REPORT_NEXT_STEPS.get(action):
-        embed.add_field(name="➡️ What now?", value=next_step, inline=False)
+        embed.description += "\n" + subtext(next_step)
     return embed
 
 
@@ -160,8 +147,7 @@ def report_submitted_embed(*, match_id: int) -> discord.Embed:
     return card(
         f"{emoji('REPORT_RECEIPT')} Score sent",
         (
-            f"Thanks! Your opponent has been asked to confirm **Match #{match_id}**.\n"
-            + subtext("We'll let you know as soon as they answer.")
+            f"Waiting for your opponent to confirm **Match #{match_id}**."
         ),
         color=REPORT_COLOR,
         section="Score report",
@@ -270,7 +256,7 @@ async def apply_report_action(
         return
 
     if action == "confirm":
-        content = f"### {result['summary']}\nBoth players agree, so it's official. GG! 🤝"
+        content = result["summary"]
     else:
         content = f"<@{interaction.user.id}> {PAST_TENSE[action]} this score."
     if reason:
@@ -293,7 +279,7 @@ async def apply_report_action(
     if action != "confirm":
         players = " ".join(f"<@{pid}>" for pid in await service.participants(report))
         notice = (
-            f"Heads up, <@{interaction.user.id}> {PAST_TENSE[action]} the score "
+            f"<@{interaction.user.id}> {PAST_TENSE[action]} the score "
             f"for Match #{report.match_id}."
         )
         await _notify(

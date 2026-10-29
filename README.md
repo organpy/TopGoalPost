@@ -395,6 +395,7 @@ database. Every subcommand is host-only and replies ephemerally.
 |---------|-------------|
 | `/player info target:@P [season:N]` | Everything stored: ID, country, timezone, season stats, availability |
 | `/player set target:@P [name] [country] [timezone]` | Patch identity; only supplied options change, `country:none` clears |
+| `/player add target:@P [name] [country] [timezone]` | Sign a player up for the current season (SIGNUP only); pick them or paste their Discord ID |
 | `/player stats target:@P [seed] [playin_rank] [hp] [open_wins] [open_losses] [open_gd]` | Patch season stats; `seed:0` / `playin_rank:0` clear |
 | `/player add_weekly target:@P weekday:Fri start:19:00 finish:21:30` | Add a recurring slot (times are in the player's timezone) |
 | `/player add_date target:@P day:15 start_time:19:00 finish_time:21:00 [preferred]` | Add a one-off slot |

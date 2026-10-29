@@ -2183,11 +2183,10 @@ class TestResultSummary:
         await svc.report_score(match_id, 5, 0, 0)
         summary = await svc.format_result_summary(match_id)
 
-        assert f"Match {match_id}" in summary
-        assert "Swiss" in summary
-        assert "SW-R1-M3" in summary
-        assert f"{p1.name} 5-0 {p2.name}" in summary
-        assert "Series" not in summary
+        assert summary.splitlines() == [
+            "**Swiss - Round 1**",
+            f"{p1.name} **5 - 0** {p2.name}",
+        ]
 
     async def test_bo3_summary_tracks_series_and_games(self, db, seed_data):
         from bot.services.match import MatchService
@@ -2224,8 +2223,9 @@ class TestResultSummary:
 
         await svc.report_score(match_id, 5, 0, 0)
         summary = await svc.format_result_summary(match_id)
-        assert "Series 1-0" in summary
-        assert "G1 5-0" in summary
+        assert summary.splitlines()[0] == "**Playoff Winners Bracket - Round 1**"
+        assert "M3" not in summary
+        assert summary.splitlines()[-1] == "Series 1 - 0 · G1 5-0"
 
         async with db.get_session() as session:
             games = (
@@ -2243,13 +2243,20 @@ class TestResultSummary:
 
         await svc.report_score(game2_id, 3, 2, 0)
         summary = await svc.format_result_summary(game2_id)
-        assert "Series 2-0" in summary
-        assert "G1 5-0, G2 3-2" in summary
+        assert summary.splitlines()[-1] == "Series 2 - 0 · G1 5-0 · G2 3-2"
 
     async def test_summary_for_unknown_match(self, db):
         from bot.services.match import MatchService
 
         assert await MatchService().format_result_summary(9999) == "Match 9999"
+
+    def test_describe_slot_labels(self):
+        from bot.services.match import describe_slot
+
+        assert describe_slot("Playoff", "L-R3-M2") == "Playoff Losers Bracket - Round 3"
+        assert describe_slot("Playoff", "GF-M2") == "Playoff Grand Final Reset"
+        assert describe_slot("Playin", "P-CUT-M1") == "Playin - Cut Round"
+        assert describe_slot("Open", None) == "Open"
 
 
 async def test_playin_render_previews_cut_round(db):
