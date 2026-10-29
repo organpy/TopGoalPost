@@ -17,6 +17,14 @@ def test_content_filter_catches_common_variants():
     assert find_vulgarity("sh1t") == "shit"
 
 
+def test_content_filter_catches_slurs_and_phrases():
+    assert find_vulgarity("go kill yourself") == "go kill yourself"
+    assert find_vulgarity("k.y.s") == "kys"
+    assert find_vulgarity("heil-hitler") == "heil hitler"
+    assert find_vulgarity("you sp4z") == "spaz"
+    assert find_vulgarity("raccoon among pakistan spicy") is None
+
+
 def test_content_filter_avoids_innocent_substrings():
     assert find_vulgarity("classic match") is None
     assert find_vulgarity("Scunthorpe") is None
