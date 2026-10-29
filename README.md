@@ -57,6 +57,7 @@ startup and clears global duplicates.
 | `SERVER_ID` | yes | guild to sync slash commands into |
 | `DATABASE_URL` | no | defaults to `sqlite+aiosqlite:///data/bot.db` |
 | `COMMAND_PREFIX` | no | defaults to `!` |
+| `BRANDING_FILE` | no | defaults to `branding.json` in the repo root |
 
 ---
 
@@ -536,6 +537,29 @@ All config lives in the `settings` DB table (flat key–value). Set via
 | `agreements_channel` | Channel where agreed match times are announced (falls back to `match_channel`) |
 | `admin_id` | Discord ID of the head admin (shown in error messages) |
 | `admin_roles` | Comma-separated role IDs allowed to use admin/host commands |
+
+### Branding
+
+The bot ships branded as **TopGoalPost** for the **Pro Bobble League Circuit
+(PBLC)**. You can rename the bot, tournament, circuit label, and custom emoji
+IDs/fallbacks without touching code — edit `branding.json` in the repo root,
+or point `BRANDING_FILE` at another JSON file, then restart the bot. Missing or
+invalid values fall back to the defaults in that file; if the whole file is
+missing, safe generic names are used so the bot still starts.
+
+```json
+{
+  "bot": { "name": "TopGoalPost" },
+  "tournament": {
+    "name": "Pro Bobble League Circuit",
+    "short_name": "PBLC",
+    "circuit_label": "PBL CIRCUITS WON"
+  },
+  "emojis": {
+    "OPEN": { "name": "pb_open", "id": "123456789012345678", "fallback": "🎲" }
+  }
+}
+```
 
 ---
 

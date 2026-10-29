@@ -54,7 +54,7 @@ async def test_bot_handlers_reply(monkeypatch):
     import main
 
     PERMISSION_DENIAL_LIMITER.reset()
-    bot = main.TopGoalPostBot.__new__(main.TopGoalPostBot)
+    bot = main.LeagueBot.__new__(main.LeagueBot)
 
     ctx = MagicMock()
     ctx.author = MagicMock()
@@ -84,7 +84,7 @@ async def test_app_permission_denial_is_ephemeral_and_rate_limited():
     import main
 
     PERMISSION_DENIAL_LIMITER.reset()
-    bot = main.TopGoalPostBot.__new__(main.TopGoalPostBot)
+    bot = main.LeagueBot.__new__(main.LeagueBot)
 
     first = _interaction(done=False)
     first.user = MagicMock()
@@ -109,7 +109,7 @@ async def test_prefix_permission_falls_back_to_public_when_dm_is_closed():
     import main
 
     PERMISSION_DENIAL_LIMITER.reset()
-    bot = main.TopGoalPostBot.__new__(main.TopGoalPostBot)
+    bot = main.LeagueBot.__new__(main.LeagueBot)
 
     ctx = MagicMock()
     ctx.author = MagicMock()

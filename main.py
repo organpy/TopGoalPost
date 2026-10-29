@@ -1,4 +1,4 @@
-"""Main entry point for TopGoalPost bot."""
+"""Main entry point for the league bot."""
 
 import asyncio
 import logging
@@ -30,7 +30,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
-logger = logging.getLogger("TopGoalPost")
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -62,7 +62,7 @@ def select_cogs(env=os.environ) -> list[str]:
     return COGS + (DEV_COGS if dev_mode(env) else [])
 
 
-class TopGoalPostBot(commands.Bot):
+class LeagueBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -176,7 +176,7 @@ async def main():
         logger.error("DISCORD_TOKEN not found in environment variables.")
         return
 
-    bot = TopGoalPostBot()
+    bot = LeagueBot()
     async with bot:
         await bot.start(TOKEN)
 

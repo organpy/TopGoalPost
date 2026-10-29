@@ -9,6 +9,7 @@ from functools import lru_cache
 
 from PIL import Image, ImageDraw, ImageFont
 
+from bot.branding import BRANDING
 from bot.services.player_stats import OpenState, PlayerStats
 from bot.utils.countries import COUNTRIES
 from . import asset_path, save_png_atomic
@@ -356,7 +357,13 @@ def _draw_awards(d: ImageDraw.ImageDraw, stats: PlayerStats) -> None:
     count_y = top + 46
     d.text((block_left, count_y), str(won), font=_font(64), fill=color, anchor="lm")
     d.text((block_left + count_w + 12, count_y), label, font=_font(22), fill=color, anchor="lm")
-    d.text((block_mid, top + 82), "PBL CIRCUITS WON", font=_font(15), fill=MUTED, anchor="mm")
+    d.text(
+        (block_mid, top + 82),
+        _fit(BRANDING.circuit_label, count_right - MARGIN - 24, 15),
+        font=_font(15),
+        fill=MUTED,
+        anchor="mm",
+    )
 
     # Right: one chip per won season.
     seasons_left = count_right + 16
@@ -386,7 +393,7 @@ def _draw_footer(d: ImageDraw.ImageDraw, stats: PlayerStats) -> None:
     d.line((MARGIN, y, CARD_W - MARGIN, y), fill=RULE)
     d.text(
         (MARGIN, y + 14),
-        "TopGoalPost · Pro Bobble League Circuit",
+        _fit(BRANDING.footer, CONTENT_W - 190, 18),
         font=_font(18),
         fill=MUTED,
     )

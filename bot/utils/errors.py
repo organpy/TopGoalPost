@@ -9,7 +9,7 @@ from discord.ext import commands
 from bot.services.audit import current_actor
 from bot.utils.rate_limit import SlidingWindowRateLimiter
 
-logger = logging.getLogger("TopGoalPost.errors")
+logger = logging.getLogger(__name__)
 
 PERMISSION_MESSAGE = "⛔ You need an administrator or host role to use this command."
 PERMISSION_DENIAL_LIMITER = SlidingWindowRateLimiter(limit=1, window_seconds=30)

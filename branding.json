@@ -1,0 +1,72 @@
+{
+  "bot": {
+    "name": "TopGoalPost"
+  },
+  "tournament": {
+    "name": "Pro Bobble League Circuit",
+    "short_name": "PBLC",
+    "circuit_label": "PBL CIRCUITS WON"
+  },
+  "emojis": {
+    "LEAGUE": {
+      "name": "pb_pblc",
+      "id": "1565055569981874397",
+      "fallback": "🏟️"
+    },
+    "SIGNUP": {
+      "name": "pb_signup",
+      "id": "1565055323645943889",
+      "fallback": "📝"
+    },
+    "OPEN": {
+      "name": "pb_open",
+      "id": "1565055325189578945",
+      "fallback": "🎲"
+    },
+    "PLAYINS": {
+      "name": "pb_playins",
+      "id": "1565055326632411138",
+      "fallback": "⚔️"
+    },
+    "SWISS": {
+      "name": "pb_swiss",
+      "id": "1565055327982977024",
+      "fallback": "🇨🇭"
+    },
+    "PLAYOFFS": {
+      "name": "pb_playoffs",
+      "id": "1565055541120598026",
+      "fallback": "🏆"
+    },
+    "CHAMPION": {
+      "name": "pb_champion",
+      "id": "1565055336560201728",
+      "fallback": "👑"
+    },
+    "MATCH": {
+      "name": "pb_match",
+      "id": "1565055335159566356",
+      "fallback": "🎮"
+    },
+    "REPORT": {
+      "name": "pb_report",
+      "id": "1565055333368598568",
+      "fallback": "🎮"
+    },
+    "REPORT_RECEIPT": {
+      "name": "pb_report",
+      "id": "1565055333368598568",
+      "fallback": "📨"
+    },
+    "SCHEDULE": {
+      "name": "pb_schedule",
+      "id": "1565055331799671064",
+      "fallback": "🗓️"
+    },
+    "OFFER": {
+      "name": "pb_schedule",
+      "id": "1565055331799671064",
+      "fallback": "⏰"
+    }
+  }
+}

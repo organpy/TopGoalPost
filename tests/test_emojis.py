@@ -1,4 +1,4 @@
-"""Custom PBLC emojis stay centralized and fall back cleanly."""
+"""League custom emojis stay centralized and fall back cleanly."""
 
 import discord
 import pytest
@@ -28,7 +28,7 @@ def reset_emoji_binding():
 
 def test_standard_fallbacks_match_the_old_emoji():
     expected = {
-        "PBLC": "🏟️",
+        "LEAGUE": "🏟️",
         "SIGNUP": "📝",
         "OPEN": "🎲",
         "PLAYINS": "⚔️",

@@ -3,6 +3,7 @@
 import logging
 import discord
 
+from bot.branding import BRANDING
 from bot.config import Config
 from bot.services.season import next_state
 from bot.utils.emojis import get as emoji
@@ -33,8 +34,9 @@ STAGE_ANNOUNCEMENTS = {
         "title": "Signups are open",
         "emoji": "SIGNUP",
         "description": (
-            "A brand-new **PBLC** season is on the way, and we'd love to have "
-            "you in it. Grab your spot before the bracket locks!"
+            f"A brand-new **{BRANDING.tournament_short_name}** season is on the "
+            "way, and we'd love to have you in it. Grab your spot before the "
+            "bracket locks!"
         ),
         "color": BLUE,
         "actions": [
@@ -120,7 +122,7 @@ def stage_announcement_embed(state: str) -> discord.Embed | None:
         color=meta["color"],
         section="Season stage update",
     )
-    embed.set_author(name=f"{emoji('PBLC')} {STAGE_LABELS[state]} stage")
+    embed.set_author(name=f"{emoji('LEAGUE')} {STAGE_LABELS[state]} stage")
     for name, value in meta["actions"]:
         embed.add_field(name=name, value=value, inline=True)
     embed.add_field(name="💡 Good to know", value=meta["tip"], inline=False)
