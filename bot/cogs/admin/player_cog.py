@@ -34,7 +34,7 @@ from bot.services.season import SeasonService
 from bot.services.signup import SignupService
 from bot.ui.confirm import confirm
 from bot.utils.countries import country_choices, resolve_country
-from bot.utils.names import unsafe_name_reason
+from bot.utils.names import clean_player_name, unsafe_name_reason
 from bot.utils.threads import sync_player_threads
 
 CLEAR_TOKENS = {"none", "clear", "-"}
@@ -186,6 +186,7 @@ class PlayerCog(commands.Cog):
     @app_commands.describe(
         target="The player to edit",
         name="New display name (3-50 characters)",
+        reset_name="Revert the name to the player's Discord username",
         country="Country name or 2-letter code, or 'none' to clear",
         timezone="IANA timezone, e.g. Europe/Berlin",
     )
@@ -200,11 +201,20 @@ class PlayerCog(commands.Cog):
         name: Optional[str] = None,
         country: Optional[str] = None,
         timezone: Optional[str] = None,
+        reset_name: Optional[bool] = None,
     ):
         await interaction.response.defer(ephemeral=True)
+        if name is not None and reset_name:
+            await interaction.followup.send(
+                "Pass either name or reset_name, not both.", ephemeral=True
+            )
+            return
+        if reset_name:
+            name = target.name
         if name is None and country is None and timezone is None:
             await interaction.followup.send(
-                "Nothing to change — pass at least one of name, country or timezone.",
+                "Nothing to change — pass at least one of name, reset_name, "
+                "country or timezone.",
                 ephemeral=True,
             )
             return
@@ -227,7 +237,9 @@ class PlayerCog(commands.Cog):
                 target.id, name, force=True
             )
             if ok:
-                changes.append(f"name: `{before[0]}` → `{name}`")
+                changes.append(
+                    f"name: `{before[0]}` → `{clean_player_name(name)[0]}`"
+                )
             else:
                 errors.append(msg)
 

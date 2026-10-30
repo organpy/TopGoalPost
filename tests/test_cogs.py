@@ -1190,6 +1190,41 @@ class TestPlayerAdmin:
 
         assert await SchedulerService().get_timezone(42) == "Asia/Tokyo"
 
+    async def test_set_reset_name_uses_discord_username(
+        self, mock_interaction, mock_bot
+    ):
+        from bot.cogs.admin.player_cog import PlayerCog
+
+        await self._register()
+        cog = PlayerCog(mock_bot)
+        target = self._target()
+        target.name = "realuser"
+
+        await cog.set_cmd.callback(
+            cog, mock_interaction, target, reset_name=True
+        )
+
+        async with get_db_manager().get_session() as session:
+            player = await PlayerRepository(session).get_by_discord_id(42)
+            assert player.name == "realuser"
+        assert "`Old` → `realuser`" in self._sent(mock_interaction)
+
+    async def test_set_refuses_name_and_reset_name_together(
+        self, mock_interaction, mock_bot
+    ):
+        from bot.cogs.admin.player_cog import PlayerCog
+
+        await self._register()
+        cog = PlayerCog(mock_bot)
+
+        await cog.set_cmd.callback(
+            cog, mock_interaction, self._target(), "NewName", reset_name=True
+        )
+
+        assert "not both" in self._sent(mock_interaction)
+        async with get_db_manager().get_session() as session:
+            assert (await PlayerRepository(session).get_by_discord_id(42)).name == "Old"
+
     async def test_set_rejects_unknown_player(self, mock_interaction, mock_bot):
         from bot.cogs.admin.player_cog import PlayerCog
 
