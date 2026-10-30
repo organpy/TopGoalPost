@@ -18,7 +18,7 @@ from bot.config import Config
 from bot.db import get_db_manager, PlayerRepository
 from bot.rendering import ASSETS_ROOT
 from bot.services.match import MatchService
-from bot.services.scheduler import SchedulerService, WEEKDAYS
+from bot.services.scheduler import SchedulerService, UTC_OFFSET_LABELS, WEEKDAYS
 from bot.services.season import SeasonService
 from bot.utils.content_filter import find_vulgarity
 from bot.ui.scheduling import (
@@ -100,17 +100,24 @@ def target_discord_id(interaction: discord.Interaction) -> int:
 async def timezone_autocomplete(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:
-    """Suggest valid IANA timezones."""
+    """Suggest valid IANA timezones and UTC offsets (UTC+1, UTC-3, ...)."""
     query = current.strip()
     if not query:
         return [app_commands.Choice(name=zone, value=zone) for zone in COMMON_TIMEZONES]
 
-    lowered = query.lower()
+    lowered = query.lower().replace(" ", "")
+    if lowered.startswith("gmt"):
+        lowered = "utc" + lowered[3:]
     matches = [
         zone
         for zone in COMMON_TIMEZONES
         if lowered in zone.lower()
     ]
+    matches.extend(
+        label
+        for label in UTC_OFFSET_LABELS
+        if label.lower().startswith(lowered) and label not in matches
+    )
     matches.extend(
         sorted(
             zone
@@ -227,7 +234,7 @@ class ScheduleCog(commands.Cog):
         return tz
 
     @app_commands.command(name="set_timezone", description="Set your timezone")
-    @app_commands.describe(timezone="e.g. UTC, Europe/Berlin, America/New_York")
+    @app_commands.describe(timezone="e.g. Europe/Berlin, America/New_York or UTC+1")
     @app_commands.autocomplete(timezone=timezone_autocomplete)
     async def set_timezone(self, interaction: discord.Interaction, timezone: str):
         try:
@@ -237,13 +244,16 @@ class ScheduleCog(commands.Cog):
         except Exception:
             pass
 
-        tz = self.scheduler.resolve_timezone(timezone)
-        if tz is None:
+        normalized = self.scheduler.normalize_timezone(timezone)
+        if normalized is None:
             await interaction.response.send_message(
-                f'Invalid timezone "{timezone}", list of available timezones: {TIMEZONE_LIST_URL}',
+                f'Invalid timezone "{timezone}". Use a UTC offset like UTC+1, '
+                f"or pick a zone from: {TIMEZONE_LIST_URL}",
                 ephemeral=True,
             )
             return
+        timezone = normalized
+        tz = self.scheduler.resolve_timezone(timezone)
 
         await self.scheduler.set_timezone(interaction.user.id, timezone)
         await interaction.response.send_message(

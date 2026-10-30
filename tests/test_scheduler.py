@@ -480,3 +480,45 @@ class TestMatchScheduling:
 
         hint = await ScheduleCog(MagicMock())._overlap_hint(111, 222)
         assert f"<t:{start + 3600}:f>" in hint
+
+
+class TestUtcOffsets:
+    def test_offsets_resolve_to_fixed_zones(self):
+        from datetime import timedelta
+
+        cases = {
+            "UTC+1": timedelta(hours=1),
+            "utc-3": timedelta(hours=-3),
+            "GMT+5:30": timedelta(hours=5, minutes=30),
+            "UTC-0:30": timedelta(minutes=-30),
+            "UTC+14": timedelta(hours=14),
+        }
+        for text, delta in cases.items():
+            tz = SchedulerService.resolve_timezone(text)
+            assert tz.utcoffset(None) == delta, text
+
+    def test_out_of_range_offsets_are_invalid(self):
+        for text in ("UTC+15", "UTC-13", "UTC+1:20", "UTC+"):
+            assert SchedulerService.resolve_timezone(text) is None, text
+
+    def test_normalize_gives_canonical_labels(self):
+        assert SchedulerService.normalize_timezone("gmt + 2") == "UTC+2"
+        assert SchedulerService.normalize_timezone("utc-05:00") == "UTC-5"
+        assert SchedulerService.normalize_timezone(" Europe/Berlin ") == "Europe/Berlin"
+        assert SchedulerService.normalize_timezone("Mars/Olympus") is None
+
+    async def test_set_timezone_stores_normalized_offset(self, db):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from bot.cogs.scheduling.schedule_cog import ScheduleCog
+
+        cog = ScheduleCog(MagicMock())
+        interaction = MagicMock()
+        interaction.user.id = 77
+        interaction.user.display_avatar.save = AsyncMock()
+        interaction.response = AsyncMock()
+
+        await cog.set_timezone.callback(cog, interaction, "utc+1")
+
+        assert await SchedulerService().get_timezone(77) == "UTC+1"
+        assert "UTC+1" in interaction.response.send_message.call_args[0][0]
