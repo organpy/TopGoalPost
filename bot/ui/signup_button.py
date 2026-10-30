@@ -5,6 +5,7 @@ import discord
 from bot.utils.embeds import BLUE, card, season_track, subtext
 from bot.utils.emojis import get as emoji
 from bot.utils.errors import ReportingView
+from bot.utils.names import clean_player_name
 
 from bot.config import Config
 from bot.rendering import ASSETS_ROOT
@@ -74,6 +75,11 @@ class SignupModal(discord.ui.Modal, title="Sign up"):
             await interaction.response.send_message(SIGNUPS_CLOSED, ephemeral=True)
             return
 
+        name, error = clean_player_name(self.name.value)
+        if error:
+            await interaction.response.send_message(error, ephemeral=True)
+            return
+
         country = (self.country.value or "").strip().upper() or None
 
         try:
@@ -87,7 +93,7 @@ class SignupModal(discord.ui.Modal, title="Sign up"):
 
         if isinstance(interaction.user, discord.Member):
             try:
-                await interaction.user.edit(nick=self.name.value)
+                await interaction.user.edit(nick=name)
             except discord.Forbidden:
                 pass
 
@@ -101,7 +107,7 @@ class SignupModal(discord.ui.Modal, title="Sign up"):
                         pass
 
         success, msg = await self.signup_service.register(
-            interaction.user.id, self.name.value, country
+            interaction.user.id, name, country
         )
         await interaction.response.send_message(content=msg, ephemeral=True)
 

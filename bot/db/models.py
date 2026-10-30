@@ -15,7 +15,9 @@ from sqlalchemy import (
     UniqueConstraint,
     CheckConstraint,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, validates
+
+from bot.utils.names import unsafe_name_reason
 
 
 class Base(DeclarativeBase):
@@ -78,6 +80,14 @@ class Player(Base):
         back_populates="player", foreign_keys="MatchPlayer.player_id"
     )
     player_seasons: Mapped[list["PlayerSeason"]] = relationship(back_populates="player")
+
+    @validates("name")
+    def _validate_name(self, key, name):
+        # Last line of defense: a stored name must never be able to ping.
+        reason = unsafe_name_reason(name or "")
+        if reason:
+            raise ValueError(reason)
+        return name
 
     def __repr__(self):
         return f"<Player(id={self.id}, discord_id={self.discord_id}, name={self.name})>"

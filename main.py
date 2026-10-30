@@ -72,6 +72,10 @@ class LeagueBot(commands.Bot):
             command_prefix=commands.when_mentioned_or(COMMAND_PREFIX),
             intents=intents,
             help_command=commands.DefaultHelpCommand(),
+            # Player names are echoed everywhere; never let them ping everyone.
+            allowed_mentions=discord.AllowedMentions(
+                everyone=False, roles=True, users=True, replied_user=True
+            ),
         )
 
     async def setup_hook(self):
