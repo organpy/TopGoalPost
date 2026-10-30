@@ -10,6 +10,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo, available_timezones
 
 import discord
+import pytz
 from discord import app_commands
 from discord.ext import commands
 
@@ -21,6 +22,7 @@ from bot.services.match import MatchService
 from bot.services.scheduler import SchedulerService, UTC_OFFSET_LABELS, WEEKDAYS
 from bot.services.season import SeasonService
 from bot.utils.content_filter import find_vulgarity
+from bot.utils.countries import COUNTRIES
 from bot.ui.scheduling import (
     MatchConfirmView,
     TimestampView,
@@ -53,6 +55,9 @@ COMMON_TIMEZONES = (
     "Asia/Tokyo",
     "Australia/Sydney",
 )
+
+# Countries tzdata files under another country's zone.
+EXTRA_COUNTRY_ZONES = {"xk": ("Europe/Belgrade",)}
 
 
 def parse_hhmm(text: str) -> Optional[tuple[int, int]]:
@@ -100,32 +105,42 @@ def target_discord_id(interaction: discord.Interaction) -> int:
 async def timezone_autocomplete(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:
-    """Suggest valid IANA timezones and UTC offsets (UTC+1, UTC-3, ...)."""
+    """Suggest IANA timezones, UTC offsets (UTC+1) and zones by country name."""
     query = current.strip()
     if not query:
         return [app_commands.Choice(name=zone, value=zone) for zone in COMMON_TIMEZONES]
 
-    lowered = query.lower().replace(" ", "")
-    if lowered.startswith("gmt"):
-        lowered = "utc" + lowered[3:]
-    matches = [
-        zone
-        for zone in COMMON_TIMEZONES
-        if lowered in zone.lower()
+    lowered = query.lower()
+    compact = lowered.replace(" ", "")
+    if compact.startswith("gmt"):
+        compact = "utc" + compact[3:]
+
+    # zone -> label shown in Discord; insertion order is the ranking.
+    matches: dict[str, str] = {}
+
+    def add(zone: str, label: str | None = None) -> None:
+        matches.setdefault(zone, label or zone)
+
+    for zone in COMMON_TIMEZONES:
+        if lowered in zone.lower():
+            add(zone)
+    for label in UTC_OFFSET_LABELS:
+        if label.lower().startswith(compact):
+            add(label)
+    if len(compact) >= 3:
+        for name, code in COUNTRIES.items():
+            if compact in name.lower().replace(" ", ""):
+                zones = pytz.country_timezones.get(code.upper()) or EXTRA_COUNTRY_ZONES.get(code, ())
+                for zone in zones:
+                    add(zone, f"{zone} ({name})")
+    for zone in sorted(available_timezones()):
+        if lowered.replace(" ", "_") in zone.lower():
+            add(zone)
+
+    return [
+        app_commands.Choice(name=label, value=zone)
+        for zone, label in list(matches.items())[:25]
     ]
-    matches.extend(
-        label
-        for label in UTC_OFFSET_LABELS
-        if label.lower().startswith(lowered) and label not in matches
-    )
-    matches.extend(
-        sorted(
-            zone
-            for zone in available_timezones()
-            if lowered in zone.lower() and zone not in COMMON_TIMEZONES
-        )
-    )
-    return [app_commands.Choice(name=zone, value=zone) for zone in matches[:25]]
 
 
 async def day_autocomplete(
