@@ -366,6 +366,35 @@ class TournamentFlowService:
                     seen.setdefault(mp.player.discord_id, None)
         return list(seen)
 
+    async def stage_discord_ids(self, season: int, stage: str) -> Optional[set[int]]:
+        """Everyone taking part in ``stage`` (played or not), for stage roles.
+
+        SIGNUP means everyone registered this season. None when the stage has
+        no event yet. Name-only placeholders (negative IDs) are skipped.
+        """
+        async with self.db.get_session() as session:
+            if stage == "SIGNUP":
+                stmt = (
+                    select(Player.discord_id)
+                    .join(PlayerSeason, PlayerSeason.player_id == Player.id)
+                    .where(PlayerSeason.season_number == season)
+                )
+            else:
+                etype = STAGE_EVENTS.get(stage)
+                if not etype:
+                    return None
+                event = await EventRepository(session).get_by_type_and_season(etype, season)
+                if not event:
+                    return None
+                stmt = (
+                    select(Player.discord_id)
+                    .join(MatchPlayer, MatchPlayer.player_id == Player.id)
+                    .join(Match, Match.id == MatchPlayer.match_id)
+                    .where(Match.event_id == event.id)
+                )
+            ids = (await session.execute(stmt)).scalars().all()
+        return {discord_id for discord_id in ids if discord_id > 0}
+
     async def registered_discord_ids(self) -> set[int]:
         async with self.db.get_session() as session:
             return set((await session.execute(select(Player.discord_id))).scalars().all())

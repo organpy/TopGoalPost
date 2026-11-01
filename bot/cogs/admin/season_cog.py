@@ -230,7 +230,7 @@ class SeasonAdminCog(commands.Cog):
         "announcements_channel": "Channel for public stage and season announcements",
         "admin_id": "Discord ID of the head admin (contact for errors)",
         "admin_roles": "Comma-separated role IDs allowed to use admin/host commands",
-        "signup_role": "Role given to signed-up players (never removed by giveroles)",
+        "signup_role": "Role given to signed-up players (synced by `!giveroles signup`)",
         "moderator_role": "Role that can confirm/reject scores",
         "open_role": "Role for Open stage participants",
         "playin_role": "Role for Playin stage participants",
