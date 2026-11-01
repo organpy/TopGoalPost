@@ -32,6 +32,15 @@ STAGE_EVENT_TYPES = {
     "PLAYOFF": "playoff_role",
 }
 
+# Config key -> default role name created by !setup_roles.
+SETUP_ROLES = {
+    "signup_role": "Signup",
+    "open_role": "Open",
+    "playin_role": "Playins",
+    "swiss_role": "Swiss",
+    "playoff_role": "Playoffs",
+}
+
 
 async def _save_avatar(user: discord.abc.User) -> bool:
     """Store a registered player's avatar as assets/pfps/<id>.png."""
@@ -205,6 +214,48 @@ class AdminCog(commands.Cog):
                         continue
 
         await message.edit(content=f"Assigned {role_key} to {added} players. Old stage roles cleared.")
+
+    @commands.command(
+        name="setup_roles",
+        help="Create the signup and stage roles and save their IDs "
+        "(optional name prefix, e.g. !setup_roles S5)",
+    )
+    @require_host()
+    async def setup_roles_cmd(self, ctx: commands.Context, *, prefix: str = ""):
+        if not ctx.guild:
+            await ctx.send("Guild only.")
+            return
+
+        cfg = Config()
+        prefix = prefix.strip()
+        lines = []
+        for key, base_name in SETUP_ROLES.items():
+            role_id = await cfg.get_role_id(key)
+            existing = ctx.guild.get_role(role_id) if role_id else None
+            if existing is not None:
+                lines.append(f"• `{key}`: already set to {existing.mention}")
+                continue
+            name = f"{prefix} {base_name}" if prefix else base_name
+            try:
+                role = await ctx.guild.create_role(
+                    name=name,
+                    mentionable=True,
+                    reason=f"setup_roles by {ctx.author}",
+                )
+            except discord.HTTPException as e:
+                lines.append(f"• `{key}`: could not create **{name}** ({e.__class__.__name__})")
+                continue
+            await cfg.set(key, str(role.id))
+            await audit.record(
+                "roles.setup", "role", role.id, actor_id=ctx.author.id,
+                key=key, name=name,
+            )
+            lines.append(f"• `{key}`: created {role.mention}")
+
+        await ctx.send(
+            "**Role setup**\n" + "\n".join(lines),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     @commands.command(name="signupbutton", hidden=True, help="Post the persistent signup button")
     @require_host()

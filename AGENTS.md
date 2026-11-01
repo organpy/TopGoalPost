@@ -162,7 +162,8 @@ Config keys (`!set_config key value`): required `match_channel`,
 `score_channel`; recommended `agreements_channel`, `announcements_channel`,
 `admin_roles`, `moderator_role`, `signup_role`, stage roles
 (`open_role`, `playin_role`, `swiss_role`, `playoff_role`), `admin_id`.
-Run `/doctor` after setup.
+`!setup_roles [prefix]` creates any missing signup/stage roles and stores
+their IDs. Run `/doctor` after setup.
 
 Bot permissions: Send Messages, Embed Links, Attach Files, Create Public
 Threads, Manage Threads (match channel), Manage Roles (stage roles),

@@ -2073,3 +2073,54 @@ class TestDashboardReadiness:
         ask.assert_awaited_once()
         cleanse.assert_not_awaited()
         mock_interaction.followup.send.assert_awaited_with("Cancelled.", ephemeral=True)
+
+
+class TestSetupRoles:
+    async def test_creates_missing_roles_and_stores_ids(self, db, mock_ctx, mock_bot):
+        from bot.cogs.admin.admin_cog import AdminCog, SETUP_ROLES
+        from bot.config import Config
+
+        await Config().set("open_role", "500")
+        existing = MagicMock(id=500, mention="<@&500>")
+        mock_ctx.guild.get_role = MagicMock(
+            side_effect=lambda rid: existing if rid == 500 else None
+        )
+        created = iter(range(900, 910))
+
+        async def create_role(name, **kwargs):
+            assert kwargs["mentionable"] is True
+            rid = next(created)
+            return MagicMock(id=rid, mention=f"<@&{rid}>", name=name)
+
+        mock_ctx.guild.create_role = AsyncMock(side_effect=create_role)
+        cog = AdminCog(mock_bot)
+
+        await cog.setup_roles_cmd.callback(cog, mock_ctx, prefix="S5")
+
+        names = [c.kwargs["name"] for c in mock_ctx.guild.create_role.await_args_list]
+        assert names == ["S5 Signup", "S5 Playins", "S5 Swiss", "S5 Playoffs"]
+        assert await Config().get("open_role") == "500"
+        assert await Config().get("signup_role") == "900"
+        assert await Config().get("playoff_role") == "903"
+        from bot.services.health import SETUP_ROLE_KEYS
+
+        assert tuple(SETUP_ROLES) == SETUP_ROLE_KEYS
+        body = mock_ctx.send.call_args[0][0]
+        assert "already set to <@&500>" in body and "created <@&900>" in body
+
+    async def test_reports_roles_it_cannot_create(self, db, mock_ctx, mock_bot):
+        import discord
+
+        from bot.cogs.admin.admin_cog import AdminCog
+        from bot.config import Config
+
+        mock_ctx.guild.get_role = MagicMock(return_value=None)
+        mock_ctx.guild.create_role = AsyncMock(
+            side_effect=discord.Forbidden(MagicMock(status=403), "missing perms")
+        )
+        cog = AdminCog(mock_bot)
+
+        await cog.setup_roles_cmd.callback(cog, mock_ctx)
+
+        assert await Config().get("signup_role") is None
+        assert "could not create **Signup** (Forbidden)" in mock_ctx.send.call_args[0][0]

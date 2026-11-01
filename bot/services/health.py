@@ -26,7 +26,13 @@ RECOMMENDED_CONFIG = (
     "admin_roles",
     "moderator_role",
     "signup_role",
+    "open_role",
+    "playin_role",
+    "swiss_role",
+    "playoff_role",
 )
+# Keys `!setup_roles` can create for you.
+SETUP_ROLE_KEYS = ("signup_role", "open_role", "playin_role", "swiss_role", "playoff_role")
 ASSET_DIRS = ("fonts", "flags", "pfps", "tables")
 BACKUP_RETENTION = 10
 SQLITE_PREFIX = "sqlite+aiosqlite:///"
@@ -65,11 +71,12 @@ class HealthService:
         cfg = Config()
         for key in REQUIRED_CONFIG + RECOMMENDED_CONFIG:
             value = await cfg.get(key)
+            hint = "`!setup_roles`" if key in SETUP_ROLE_KEYS else f"`!set_config {key} ...`"
             checks.append(
                 Check(
                     f"config `{key}`",
                     bool(value),
-                    "" if value else f"`!set_config {key} ...`",
+                    "" if value else hint,
                     required=key in REQUIRED_CONFIG,
                 )
             )
