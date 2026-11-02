@@ -24,6 +24,27 @@ from bot.services import audit
 from bot.services.pairing import ADVANCEMENT_MAP
 
 
+
+BRACKET_NAMES = {"W": "Winners Bracket", "L": "Losers Bracket"}
+
+
+def describe_slot(stage: str, slot: str | None) -> str:
+    """Readable stage/round label: ('Playoff', 'W-R1-M7') -> 'Playoff Winners Bracket - Round 1'."""
+    if not slot:
+        return stage
+    if slot == "GF-M1":
+        return f"{stage} Grand Final"
+    if slot == "GF-M2":
+        return f"{stage} Grand Final Reset"
+    parts = slot.split("-")
+    if parts[1:2] == ["CUT"]:
+        return f"{stage} - Cut Round"
+    round_label = f"Round {parts[1][1:]}" if len(parts) > 1 and parts[1].startswith("R") else None
+    if not round_label:
+        return stage
+    bracket = BRACKET_NAMES.get(parts[0])
+    return f"{stage} {bracket} - {round_label}" if bracket else f"{stage} - {round_label}"
+
 class MatchService:
     def __init__(self):
         self.db = get_db_manager()
@@ -1318,10 +1339,13 @@ class MatchService:
         return f"#{match.id} {stage}{slot_part}: {players}"
 
     async def format_result_summary(self, match_id: int) -> str:
-        """One-line summary of a scored match, with BO3 series detail.
+        """Multi-line summary of a scored match, with BO3 series detail.
 
-        Example:
-            Match 361 · Playoff W-R1-M3 · organ 5-0 dummy · Series 1-0 · G1 5-0, G2 3-2
+        Example::
+
+            **Playoff Winners Bracket - Round 1**
+            organ **5 - 0** dummy
+            Series 2 - 0 · G1 5-0 · G2 3-2
         """
         async with self.db.get_session() as session:
             stmt = (
@@ -1344,16 +1368,14 @@ class MatchService:
             p1_goals = mps[0].goals or 0
             p2_goals = mps[1].goals or 0
 
-            stage = match.event.type.value.title() if match.event else "?"
-            header = f"{stage} {match.bracket_slot}" if match.bracket_slot else stage
+            stage = match.event.type.value.title() if match.event else "Match"
             parts = [
-                f"Match {match.id}",
-                header,
-                f"{p1_name} {p1_goals}-{p2_goals} {p2_name}",
+                f"**{describe_slot(stage, match.bracket_slot)}**",
+                f"{p1_name} **{p1_goals} - {p2_goals}** {p2_name}",
             ]
 
             if not match.event or match.event.type != EventType.PLAYOFF:
-                return " · ".join(parts)
+                return "\n".join(parts)
 
             games = (
                 await session.execute(
@@ -1371,7 +1393,7 @@ class MatchService:
             ).scalars().unique().all()
 
         if not games:
-            return " · ".join(parts)
+            return "\n".join(parts)
 
         player_ids = [mp.player_id for mp in mps]
         wins = {pid: 0 for pid in player_ids if pid}
@@ -1385,8 +1407,10 @@ class MatchService:
                 wins[winner_mp.player_id] += 1
             game_parts.append(f"G{game.series_game or 1} {gmps[0].goals or 0}-{gmps[1].goals or 0}")
 
+        series = []
         if len(player_ids) == 2 and all(player_ids):
-            parts.append(f"Series {wins[player_ids[0]]}-{wins[player_ids[1]]}")
-        if game_parts:
-            parts.append(", ".join(game_parts))
-        return " · ".join(parts)
+            series.append(f"Series {wins[player_ids[0]]} - {wins[player_ids[1]]}")
+        series.extend(game_parts)
+        if series:
+            parts.append(" · ".join(series))
+        return "\n".join(parts)

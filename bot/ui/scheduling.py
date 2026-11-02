@@ -101,11 +101,10 @@ EXPIRED_COLOR = GREY
 OFFER_TIMEOUT_SECONDS = 840
 
 OFFER_NEXT_STEPS = {
-    "confirmed": "Have a great game, and `/report` the score when you're done.",
-    "cancelled": "Try another time with `/offer_time`.",
-    "expired": "No answer this time. Send a fresh offer with `/offer_time`.",
-    "countered": "The ball's in the other player's court now.",
-    "limit": "That's a lot of back-and-forth! Start fresh with `/offer_time`.",
+    "confirmed": "`/report` the score after the match.",
+    "cancelled": "Send another time with `/offer_time`.",
+    "expired": "Send a new offer with `/offer_time`.",
+    "limit": "Send a new offer with `/offer_time`.",
 }
 
 
@@ -148,17 +147,17 @@ def offer_embed(
     counter: bool = False,
 ) -> discord.Embed:
     """DM card shown to the player who has to answer a time offer."""
-    title = "🔁 How about this instead?" if counter else f"{emoji('OFFER')} Fancy a game?"
+    title = "🔁 Counter-offer" if counter else f"{emoji('OFFER')} Match time offer"
     action = (
-        "suggested a different time for your match"
+        "suggested a different time:"
         if counter
-        else "would like to play your match at"
+        else "wants to play at:"
     )
     expires = int(datetime.now().timestamp()) + OFFER_TIMEOUT_SECONDS
     embed = card(
         title,
         (
-            f"Hey <@{recipient_id}>! **{_display_name(proposer)}** {action}:\n"
+            f"**{_display_name(proposer)}** {action}\n"
             f"{time_block(when)}"
         ),
         color=COUNTER_COLOR if counter else OFFER_COLOR,
@@ -189,9 +188,8 @@ def offer_sent_embed(
     return card(
         "📨 Offer sent",
         (
-            f"Your offer is on its way to <@{recipient_id}> in their DMs.\n"
-            f"{time_block(when)}\n"
-            + subtext("We'll DM you as soon as they answer.")
+            f"Sent to <@{recipient_id}>.\n"
+            f"{time_block(when)}"
         ),
         color=OFFER_COLOR,
         section=_match_value(match_id),
@@ -231,7 +229,7 @@ def offer_result_embed(
     if note:
         embed.add_field(name="Message", value=quote(_safe_note(note)), inline=False)
     if next_step := OFFER_NEXT_STEPS.get(status):
-        embed.add_field(name="➡️ What now?", value=next_step, inline=False)
+        embed.description += "\n" + subtext(next_step)
     return embed
 
 
@@ -247,14 +245,13 @@ def match_channel_embed(
         f"{emoji('SCHEDULE')} Match scheduled",
         (
             f"## {_mention(player_a)} vs {_mention(player_b)}\n"
-            f"{time_block(when)}\n\n"
-            "Good luck to both, and may the best player win!"
+            f"{time_block(when)}\n"
+            + subtext("`/report` the score after the match")
         ),
         color=CONFIRMED_COLOR,
-        section=f"{_match_value(match_id)} · Confirmed via /offer_time",
+        section=_match_value(match_id),
         timestamp=False,
     )
-    embed.add_field(name="➡️ After the match", value="`/report` the score", inline=False)
     return embed
 
 
