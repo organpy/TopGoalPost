@@ -6,8 +6,8 @@ from bot.utils.embeds import BLUE, card, season_track, subtext
 from bot.utils.emojis import get as emoji
 from bot.utils.errors import ReportingView
 from bot.utils.names import clean_player_name
+from bot.utils.roles import set_member_role
 
-from bot.config import Config
 from bot.rendering import ASSETS_ROOT
 from bot.services.season import SeasonService
 from bot.services.signup import SignupService
@@ -91,25 +91,19 @@ class SignupModal(discord.ui.Modal, title="Sign up"):
         except Exception:
             pass
 
-        if isinstance(interaction.user, discord.Member):
-            try:
-                await interaction.user.edit(nick=name)
-            except discord.Forbidden:
-                pass
-
-            role_id = await Config().get_role_id("signup_role")
-            if role_id:
-                role = interaction.guild.get_role(role_id) if interaction.guild else None
-                if role:
-                    try:
-                        await interaction.user.add_roles(role, reason="Signed up via button")
-                    except discord.Forbidden:
-                        pass
-
         success, msg = await self.signup_service.register(
             interaction.user.id, name, country
         )
         await interaction.response.send_message(content=msg, ephemeral=True)
+
+        if success and isinstance(interaction.user, discord.Member):
+            try:
+                await interaction.user.edit(nick=name)
+            except discord.HTTPException:
+                pass
+            await set_member_role(
+                interaction.user, "signup_role", True, "Signed up via button"
+            )
 
 
 class SignupView(ReportingView):

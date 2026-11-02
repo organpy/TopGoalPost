@@ -7,6 +7,7 @@ from discord import app_commands
 from bot.rendering import ASSETS_ROOT
 from bot.services.signup import SignupService
 from bot.utils.countries import country_choices
+from bot.utils.roles import set_member_role
 
 
 class SignupCog(commands.Cog):
@@ -39,11 +40,19 @@ class SignupCog(commands.Cog):
 
         success, msg = await self.signup_service.register(interaction.user.id, username, country)
         await interaction.response.send_message(msg, ephemeral=True)
+        if success and isinstance(interaction.user, discord.Member):
+            await set_member_role(
+                interaction.user, "signup_role", True, "Signed up via /signup"
+            )
 
     @app_commands.command(name="unregister", description="Unregister from the current season")
     async def unregister_cmd(self, interaction: discord.Interaction):
         success, msg = await self.signup_service.unregister(interaction.user.id)
         await interaction.response.send_message(msg, ephemeral=True)
+        if success and isinstance(interaction.user, discord.Member):
+            await set_member_role(
+                interaction.user, "signup_role", False, "Unregistered"
+            )
         
     @app_commands.command(name="status", description="Check your registration status")
     async def status_cmd(self, interaction: discord.Interaction):

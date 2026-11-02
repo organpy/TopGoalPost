@@ -171,6 +171,44 @@ async def test_stage_discord_ids_includes_finished_matches(db, seed_data, open_e
     assert await flow.stage_discord_ids(1, "SWISS") is None
 
 
+class TestSignupRole:
+    async def _cog(self, success):
+        from bot.cogs.signup.signup_cog import SignupCog
+
+        cog = SignupCog(MagicMock())
+        cog.signup_service.register = AsyncMock(return_value=(success, "msg"))
+        cog.signup_service.unregister = AsyncMock(return_value=(success, "msg"))
+        interaction = MagicMock()
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 5
+        interaction.user.display_avatar.save = AsyncMock()
+        interaction.response = AsyncMock()
+        return cog, interaction
+
+    @pytest.mark.parametrize("success", [True, False])
+    async def test_signup_gives_role_only_on_success(self, db, success):
+        from bot.cogs.signup import signup_cog as module
+
+        cog, interaction = await self._cog(success)
+        with patch.object(module, "set_member_role", AsyncMock()) as give:
+            await cog.signup_cmd.callback(cog, interaction, "Name", "fr")
+        assert give.await_count == int(success)
+        if success:
+            give.assert_awaited_once_with(
+                interaction.user, "signup_role", True, "Signed up via /signup"
+            )
+
+    async def test_unregister_removes_role(self, db):
+        from bot.cogs.signup import signup_cog as module
+
+        cog, interaction = await self._cog(True)
+        with patch.object(module, "set_member_role", AsyncMock()) as give:
+            await cog.unregister_cmd.callback(cog, interaction)
+        give.assert_awaited_once_with(
+            interaction.user, "signup_role", False, "Unregistered"
+        )
+
+
 class TestGiveRolesCommand:
     def _ctx(self):
         ctx = MagicMock()
