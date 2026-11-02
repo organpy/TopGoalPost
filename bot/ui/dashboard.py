@@ -241,11 +241,11 @@ class DashboardView(ReportingView):
         if not ctx:
             return
         channel, season_num, state = ctx
-        discord_ids = await self.flow_service.unplayed_discord_ids(season_num, state)
-        if not discord_ids:
+        matchups = await self.flow_service.unplayed_matchups(season_num, state)
+        if not matchups:
             await interaction.followup.send(f"No players with unplayed {state} matches.", ephemeral=True)
             return
-        created = await create_scheduling_threads(channel, state, discord_ids)
+        created = await create_scheduling_threads(channel, state, matchups)
         await interaction.followup.send(f"Created {created} scheduling threads for {state}.", ephemeral=True)
 
     @discord.ui.button(label="Clean Threads", style=discord.ButtonStyle.danger, emoji="🧹", row=2)

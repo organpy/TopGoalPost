@@ -373,7 +373,7 @@ The same progression engine is also exposed as prefix subcommands:
 
 | Command | Description |
 |---------|-------------|
-| `!tourney makethreads [stage]` | Create group scheduling threads (`<STAGE> scheduling #N`, ~3 players each) |
+| `!tourney makethreads [stage]` | Create group scheduling threads (`<Stage> · Group N`, ~3 players each, with a pinned matchups message) |
 | `!tourney cleansethreads` | Remove non-participants from threads |
 | `!tourney generate_open` | Create 4 open matches per player |
 | `!tourney skip_open A, B` | Set Open-skip / returning seeds |

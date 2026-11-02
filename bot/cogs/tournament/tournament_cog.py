@@ -84,15 +84,15 @@ class TournamentCog(commands.Cog):
             return
 
         message = await ctx.send("Creating scheduling threads...")
-        discord_ids = await self.flow_service.unplayed_discord_ids(season_num, state)
-        if discord_ids is None:
+        matchups = await self.flow_service.unplayed_matchups(season_num, state)
+        if matchups is None:
             await message.edit(content=f"No {state} event found.")
             return
-        if not discord_ids:
+        if not matchups:
             await message.edit(content="No players with unplayed matches.")
             return
 
-        created = await create_scheduling_threads(channel, state, discord_ids)
+        created = await create_scheduling_threads(channel, state, matchups)
         await message.edit(content=f"Created {created} scheduling threads for {state}.")
 
     @tourney_group.command(name="cleansethreads", help="Remove non-participants from scheduling threads")
