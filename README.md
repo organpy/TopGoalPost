@@ -71,7 +71,7 @@ OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → (season ends)
 |-------|------------|--------------|-------------|
 | `OFFSEASON` | `/season create N` | Archive the old season and create the next one | `/seasons` |
 | `SIGNUP` | `/season advance SIGNUP` | Registration opens | `/signup`, `/status` |
-| `OPEN` | `/tourney generate_open` (advances SIGNUP → OPEN) | Four Open matches per player | `/open`, `/report` |
+| `OPEN` | `/tourney generate_open` (advances SIGNUP → OPEN) | Four Open matches per player: the 2 neighbours on each side of a signup-order ring | `/open`, `/report` |
 | `PLAYIN` | `/tourney start_playins` | Auto-advancing qualifier ladder | `/playins`, `/report` |
 | `SWISS` | `/tourney swiss_round` | 66-match survival ladder | `/swiss`, `/report` |
 | `PLAYOFF` | `/tourney generate_playoffs` | 16-player double-elimination BO3 bracket | `/playoff`, `/report` |
@@ -356,7 +356,7 @@ the reset card if one is played.
 |---------|-------------|
 | `/tourney status` | Summary + recommended next step |
 | `/tourney skip_open players:"A, B"` | Set Open-skip / returning seeds before Open |
-| `/tourney generate_open` | Create 4 open matches per player |
+| `/tourney generate_open [regenerate]` | Create 4 open matches per player; `regenerate:True` wipes all Open matches (played too) and pairs again |
 | `/tourney sync_open` | Rebuild open win/loss from scores |
 | `/tourney start_playins` | Create the complete preseeded Playin ladder |
 | `/tourney playin_round round_num:N` | Re-run a specific Playin round |
