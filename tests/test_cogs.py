@@ -382,6 +382,17 @@ class TestMatchCog:
         assert modal.match_id == 7
         assert modal.reporter_side == 0
 
+    async def test_custom_score_caps_goals_at_five(self, mock_interaction):
+        from bot.ui.report import ScoreReportModal
+
+        modal = ScoreReportModal(7, 0, mock_interaction.user.id)
+        modal.my_goals._value = "6"
+        modal.opponent_goals._value = "2"
+        await modal.on_submit(mock_interaction)
+
+        assert "between 0 and 5" in mock_interaction.response.send_message.call_args.args[0]
+        mock_interaction.response.defer.assert_not_awaited()
+
     async def test_set_score_posts_public_match_result(
         self, mock_interaction, mock_bot
     ):

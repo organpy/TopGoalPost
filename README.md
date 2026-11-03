@@ -356,7 +356,7 @@ the reset card if one is played.
 |---------|-------------|
 | `/tourney status` | Summary + recommended next step |
 | `/tourney skip_open players:"A, B"` | Set Open-skip / returning seeds before Open |
-| `/tourney generate_open [regenerate]` | Create 4 open matches per player; `regenerate:True` wipes all Open matches (played too) and pairs again |
+| `/tourney generate_open` | Create 4 open matches per player |
 | `/tourney sync_open` | Rebuild open win/loss from scores |
 | `/tourney start_playins` | Create the complete preseeded Playin ladder |
 | `/tourney playin_round round_num:N` | Re-run a specific Playin round |
