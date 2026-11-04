@@ -2729,3 +2729,40 @@ async def test_regenerate_open_replaces_played_matches_and_resets_hp(db, seed_da
     assert len(matches) == 16
     assert not any(m.completed_at for m in matches)
     assert loser.hp == 4
+
+
+async def test_swap_open_players_trades_opponents(db, seed_data):
+    from datetime import datetime
+
+    from bot.services.pairing import PairingService
+
+    svc = PairingService()
+    await svc.generate_open(1)
+    p = seed_data["players"]
+    pid = {pl.id: pl.discord_id for pl in p}
+
+    async def opponents():
+        async with db.get_session() as session:
+            event = await EventRepository(session).get_by_type_and_season(EventType.OPEN, 1)
+            matches = await MatchRepository(session).get_by_event(event.id)
+        out = {}
+        for m in matches:
+            x, y = (pid[mp.player_id] for mp in m.match_players)
+            out.setdefault(x, set()).add(y)
+            out.setdefault(y, set()).add(x)
+        return out
+
+    before = await opponents()
+    a, b = p[0].discord_id, p[4].discord_id  # not neighbours in an 8-ring
+    result = await svc.swap_open_players(1, a, b)
+    assert result["ok"] and result["matches"] == 8
+
+    after = await opponents()
+    assert after[a] == before[b] and after[b] == before[a]
+
+    async with db.get_session() as session:
+        event = await EventRepository(session).get_by_type_and_season(EventType.OPEN, 1)
+        match = (await MatchRepository(session).get_by_event(event.id))[0]
+        match.completed_at = datetime.utcnow()
+        await session.commit()
+    assert "already has a played" in (await svc.swap_open_players(1, a, b))["error"]

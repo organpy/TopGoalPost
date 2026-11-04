@@ -11,14 +11,17 @@ from bot.db import (
     Event,
     Match,
     MatchPlayer,
+    MatchReport,
     EventType,
     EventStatus,
     PlayerSeason,
     PlayerSeasonRepository,
+    PlayerRepository,
     EventRepository,
     MatchRepository,
     MatchPlayerRepository,
 )
+from bot.db.models import OPEN_REPORT_STATUSES
 from bot.rendering import prerender
 
 SWISS_FIELD_SIZE = 32
@@ -331,6 +334,60 @@ class PairingService:
             leftovers = [p for p in candidates if p not in used]
             bye = leftovers[0] if leftovers else None
             return len(pairings), history, bye, None
+
+    async def swap_open_players(self, season: int, discord_a: int, discord_b: int) -> dict:
+        """Swap two players' places in every Open match of ``season``.
+
+        A takes over all of B's opponents and B all of A's (a match between
+        them just stays). Refused once either has a played Open match or an
+        open score report, so no result changes hands.
+        """
+        if discord_a == discord_b:
+            return {"error": "Pick two different players."}
+        async with self.db.get_session() as session:
+            event = await EventRepository(session).get_by_type_and_season(EventType.OPEN, season)
+            if not event:
+                return {"error": "No Open matches this season."}
+            players = {}
+            for discord_id in (discord_a, discord_b):
+                player = await PlayerRepository(session).get_by_discord_id(discord_id)
+                if not player:
+                    return {"error": f"<@{discord_id}> is not a registered player."}
+                players[discord_id] = player
+            a, b = players[discord_a].id, players[discord_b].id
+
+            matches = await MatchRepository(session).get_by_event(event.id)
+            mine = [
+                m for m in matches
+                if any(mp.player_id in (a, b) for mp in m.match_players)
+            ]
+            if any(m.completed_at for m in mine):
+                return {"error": "One of them already has a played Open match; can't swap."}
+            pending = (
+                await session.execute(
+                    select(MatchReport.id).where(
+                        and_(
+                            MatchReport.match_id.in_([m.id for m in mine]),
+                            MatchReport.status.in_(OPEN_REPORT_STATUSES),
+                        )
+                    )
+                )
+            ).first()
+            if pending:
+                return {"error": "One of their Open matches has an open score report; resolve it first."}
+
+            for match in mine:
+                for mp in match.match_players:
+                    if mp.player_id == a:
+                        mp.player_id = b
+                    elif mp.player_id == b:
+                        mp.player_id = a
+            await session.commit()
+            return {
+                "ok": True,
+                "matches": len(mine),
+                "names": (players[discord_a].name, players[discord_b].name),
+            }
 
     async def delete_open(self, season: int) -> int:
         """Delete every Open match of ``season``. Returns how many were deleted."""
