@@ -8,8 +8,10 @@ from bot.db.models import EventType, Season, SeasonStatus
 from bot.rendering.StandingsMaker import (
     _fit_name,
     _get_season,
+    _open_table_filename,
     _playin_label_x,
     _playin_player_label,
+    _sort_open_players,
     box_w,
     flag_w,
     name_font,
@@ -18,6 +20,7 @@ from bot.rendering.StandingsMaker import (
     swiss_specs,
     swiss_texts,
 )
+from bot.rendering._adapters import OpenPlayerShim
 from bot.rendering.playoff import (
     PLAYOFF_BOX_H,
     PLAYOFF_BOX_W,
@@ -825,6 +828,36 @@ def test_season_summary_renders_podium_and_leaders(tmp_path):
         assert img.size == (SUMMARY_W, SUMMARY_H)
 
 
+def test_open_sort_profiles_order_rows_by_requested_stat():
+    players = [
+        OpenPlayerShim(1, "Alpha", "us"),
+        OpenPlayerShim(2, "Bravo", "fr"),
+        OpenPlayerShim(3, "Charlie", "de"),
+    ]
+    players[0].wins, players[0].losses, players[0].gd, players[0].goals_scored = 2, 1, 1, 8
+    players[1].wins, players[1].losses, players[1].gd, players[1].goals_scored = 2, 0, 4, 6
+    players[2].wins, players[2].losses, players[2].gd, players[2].goals_scored = 1, 3, 10, 12
+
+    def order(sort_by):
+        return [player.name for player in _sort_open_players(players, sort_by)]
+
+    assert order("wins") == ["Bravo", "Alpha", "Charlie"]
+    assert order("gd") == ["Charlie", "Bravo", "Alpha"]
+    assert order("goals") == ["Charlie", "Alpha", "Bravo"]
+    assert order("hp") == ["Bravo", "Alpha", "Charlie"]
+    assert order("name") == ["Alpha", "Bravo", "Charlie"]
+    assert order("unknown") == ["Alpha", "Bravo", "Charlie"]
+
+
+def test_open_sort_variants_use_distinct_files():
+    assert _open_table_filename(3, "name").endswith("open_s3.png")
+    assert _open_table_filename(3, "wins").endswith("open_s3_wins.png")
+    assert _open_table_filename(3, "gd").endswith("open_s3_gd.png")
+    assert _open_table_filename(3, "goals").endswith("open_s3_goals.png")
+    assert _open_table_filename(3, "hp").endswith("open_s3_hp.png")
+    assert _open_table_filename(3, "unknown").endswith("open_s3.png")
+
+
 async def test_open_renders_one_file_per_season(db, tmp_path, monkeypatch):
     """Archived seasons get their own filename and do not overwrite the live one."""
     from datetime import datetime
@@ -876,11 +909,14 @@ async def test_open_renders_one_file_per_season(db, tmp_path, monkeypatch):
 
     _, old_file, *_ = await standings.get_open(season=1)
     _, new_file, *_ = await standings.get_open(season=2)
+    _, gd_file, *_ = await standings.get_open(sort_by="gd", season=1)
 
     assert old_file.endswith("open_s1.png")
     assert new_file.endswith("open_s2.png")
+    assert gd_file.endswith("open_s1_gd.png")
     assert (tmp_path / "open_s1.png").stat().st_size > 0
     assert (tmp_path / "open_s2.png").stat().st_size > 0
+    assert (tmp_path / "open_s1_gd.png").stat().st_size > 0
 
 
 async def test_render_cache_reuses_files_and_clears_safely(db, tmp_path):

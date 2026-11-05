@@ -1930,11 +1930,13 @@ class TestStandingsCog:
         cog.season_service.get_current_season_number = AsyncMock(return_value=1)
         mock_interaction.response.is_done = MagicMock(return_value=False)
 
-        await cog._send_standings(mock_interaction, "OPEN")
+        await cog._send_standings(mock_interaction, "OPEN", sort="gd")
 
         assert render.await_count == 1
+        assert render.await_args.kwargs == {"season": 1, "sort_by": "gd"}
         sent = mock_interaction.followup.send.await_args
         assert "file" in sent.kwargs
+        assert sent.kwargs["file"].filename == "open_s1_gd.png"
         assert "ephemeral" not in sent.kwargs
 
         mock_interaction.response.is_done = MagicMock(return_value=True)
@@ -1944,6 +1946,26 @@ class TestStandingsCog:
         blocked = mock_interaction.followup.send.await_args
         assert "Try again" in blocked.args[0]
         assert blocked.kwargs["ephemeral"] is True
+
+    async def test_open_command_passes_sort_choice(self, mock_interaction, mock_bot):
+        cog = StandingsCog(mock_bot)
+        cog.show_open = AsyncMock()
+
+        await cog.open_cmd.callback(
+            cog,
+            mock_interaction,
+            sort=MagicMock(value="wins"),
+            season=2,
+        )
+        cog.show_open.assert_awaited_once_with(
+            mock_interaction, sort="wins", season=2
+        )
+
+        cog.show_open.reset_mock()
+        await cog.open_cmd.callback(cog, mock_interaction)
+        cog.show_open.assert_awaited_once_with(
+            mock_interaction, sort="name", season=None
+        )
 
 
 class TestConfirmActionView:

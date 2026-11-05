@@ -294,7 +294,7 @@ class AdminCog(commands.Cog):
     @require_host()
     async def getleaderboard_cmd(self, ctx: commands.Context, amount: int):
         await clear_render_cache()
-        result = await StandingsMaker.get_open_with_players(sort_by_rank=True)
+        result = await StandingsMaker.get_open_with_players(sort_by="wins")
         players = result[3]
         ids = [f"<@{p.id}>" for p in players[:amount]]
         await ctx.send("\n".join(ids) if ids else "No players found.")

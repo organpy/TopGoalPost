@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import os
-import random
 
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import select
@@ -67,6 +66,37 @@ def _fit_name(text: str, max_width: int = name_w - 4, font=name_font) -> str:
     while text and font.getlength(text + ellipsis) > max_width:
         text = text[:-1]
     return text + ellipsis
+
+
+OPEN_SORT_KEYS = ("wins", "gd", "goals", "hp", "name")
+DEFAULT_OPEN_SORT = "name"
+
+
+def _normalize_open_sort(sort_by: str) -> str:
+    return sort_by if sort_by in OPEN_SORT_KEYS else DEFAULT_OPEN_SORT
+
+
+def _open_table_filename(season: int, sort_by: str) -> str:
+    """Give each Open sort mode its own file so cached variants never clash."""
+    sort_by = _normalize_open_sort(sort_by)
+    suffix = "" if sort_by == DEFAULT_OPEN_SORT else f"_{sort_by}"
+    return asset_path("tables", f"open_s{season}{suffix}.png")
+
+
+def _sort_open_players(players: list, sort_by: str) -> list:
+    """Order Open rows by the selected stat, descending where appropriate."""
+    sort_by = _normalize_open_sort(sort_by)
+    if sort_by == "wins":
+        key = lambda el: (-el.wins, -el.gd, -el.goals_scored, el.name.casefold())
+    elif sort_by == "gd":
+        key = lambda el: (-el.gd, -el.wins, -el.goals_scored, el.name.casefold())
+    elif sort_by == "goals":
+        key = lambda el: (-el.goals_scored, -el.wins, -el.gd, el.name.casefold())
+    elif sort_by == "hp":
+        key = lambda el: (el.losses, -el.wins, -el.gd, el.name.casefold())
+    else:
+        key = lambda el: el.name.casefold()
+    return sorted(players, key=key)
 
 
 async def _get_season(session, season: int | None = None) -> int:
@@ -456,18 +486,22 @@ def get_flag(country_code: str, width: float | None = None) -> Image:
     return flag
 
 
-async def get_open(sort_by_rank: int = 0, season: int | None = None):
+async def get_open(
+    sort_by: str = DEFAULT_OPEN_SORT, season: int | None = None
+):
     return await _get_open_table(
-        sort_by_rank=sort_by_rank,
+        sort_by=sort_by,
         header_color=open_color,
         season=season,
         return_players=False,
     )
 
 
-async def get_open_with_players(sort_by_rank: int = 0, season: int | None = None):
+async def get_open_with_players(
+    sort_by: str = DEFAULT_OPEN_SORT, season: int | None = None
+):
     return await _get_open_table(
-        sort_by_rank=sort_by_rank,
+        sort_by=sort_by,
         header_color=open_color,
         season=season,
         return_players=True,
@@ -475,14 +509,15 @@ async def get_open_with_players(sort_by_rank: int = 0, season: int | None = None
 
 
 async def _get_open_table(
-    sort_by_rank: int,
+    sort_by: str,
     header_color: tuple[int, int, int],
     season: int | None = None,
     return_players: bool = False,
 ):
+    sort_by = _normalize_open_sort(sort_by)
     async with get_db_manager().get_session() as session:
         season = await _get_season(session, season)
-        filename = asset_path("tables", f"open_s{season}.png")
+        filename = _open_table_filename(season, sort_by)
         event = await _get_event(session, EventType.OPEN, season)
 
         matches: list[list] = []
@@ -514,11 +549,11 @@ async def _get_open_table(
             for p in db_players
         ]
 
-        layout_version = "open_table_v2"
+        layout_version = "open_table_v3"
         table_hash = hashlib.sha3_256(
             bytes(
                 repr(_match_signature(matches))
-                + repr(sort_by_rank)
+                + repr(sort_by)
                 + repr(season)
                 + layout_version,
                 "utf-8",
@@ -537,11 +572,7 @@ async def _get_open_table(
             player_matches = player.get_matches_array(match_array=matches_obj)
             for match in player_matches:
                 player.add_game_to_stats(match)
-        if sort_by_rank:
-            random.shuffle(players_copy)
-            players_copy.sort(key=lambda el: (-el.wins, -el.gd, -el.goals_scored))
-        else:
-            players_copy.sort(key=lambda el: el.name.upper())
+        players_copy = _sort_open_players(players_copy, sort_by)
 
         max_matches = max([len(i.get_matches_array(matches_obj)) for i in players_copy], default=0)
         max_matches = max(4, max_matches)

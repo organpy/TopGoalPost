@@ -15,6 +15,14 @@ from bot.ui.autocomplete import season_autocomplete
 from bot.utils.errors import report_interaction_error
 from bot.utils.rate_limit import SlidingWindowRateLimiter
 
+OPEN_SORT_CHOICES = [
+    app_commands.Choice(name="Wins (then GD, goals)", value="wins"),
+    app_commands.Choice(name="Goal difference", value="gd"),
+    app_commands.Choice(name="Goals scored", value="goals"),
+    app_commands.Choice(name="HP (fewest losses)", value="hp"),
+    app_commands.Choice(name="Name (A–Z)", value="name"),
+]
+
 
 class StandingsCog(commands.Cog):
     def __init__(self, bot):
@@ -31,6 +39,7 @@ class StandingsCog(commands.Cog):
         phase: str,
         view: str = "full",
         season: int = None,
+        sort: str = StandingsMaker.DEFAULT_OPEN_SORT,
     ):
         retry_after = self._standings_limiter.consume(
             (interaction.user.id, phase)
@@ -71,6 +80,8 @@ class StandingsCog(commands.Cog):
 
             if phase == "PLAYOFF":
                 result = await func(view=view, season=season_num)
+            elif phase == "OPEN":
+                result = await func(season=season_num, sort_by=sort)
             else:
                 result = await func(season=season_num)
             cached, filename, *extra = result
@@ -91,17 +102,25 @@ class StandingsCog(commands.Cog):
             with io.BytesIO() as image_binary:
                 img.save(image_binary, 'PNG')
                 image_binary.seek(0)
+                attachment = f"{phase.lower()}_s{season_num}"
+                if phase == "OPEN" and sort != StandingsMaker.DEFAULT_OPEN_SORT:
+                    attachment += f"_{sort}"
                 file = discord.File(
                     fp=image_binary,
-                    filename=f"{phase.lower()}_s{season_num}.png",
+                    filename=f"{attachment}.png",
                 )
                 await interaction.followup.send(file=file)
 
         except Exception as e:
             await report_interaction_error(interaction, e, f"{phase} standings")
 
-    async def show_open(self, interaction: discord.Interaction, season: int = None):
-        await self._send_standings(interaction, "OPEN", season=season)
+    async def show_open(
+        self,
+        interaction: discord.Interaction,
+        sort: str = StandingsMaker.DEFAULT_OPEN_SORT,
+        season: int = None,
+    ):
+        await self._send_standings(interaction, "OPEN", season=season, sort=sort)
 
     async def show_playins(self, interaction: discord.Interaction, season: int = None):
         await self._send_standings(interaction, "PLAYIN", season=season)
@@ -115,10 +134,23 @@ class StandingsCog(commands.Cog):
         await self._send_standings(interaction, "PLAYOFF", view=view, season=season)
 
     @app_commands.command(name="open", description="Show Open stage standings")
-    @app_commands.describe(season="Season number (defaults to the current one)")
+    @app_commands.describe(
+        sort="Order of the Open table rows",
+        season="Season number (defaults to the current one)",
+    )
+    @app_commands.choices(sort=OPEN_SORT_CHOICES)
     @app_commands.autocomplete(season=season_autocomplete)
-    async def open_cmd(self, interaction: discord.Interaction, season: int = None):
-        await self.show_open(interaction, season=season)
+    async def open_cmd(
+        self,
+        interaction: discord.Interaction,
+        sort: app_commands.Choice[str] = None,
+        season: int = None,
+    ):
+        await self.show_open(
+            interaction,
+            sort=sort.value if sort else StandingsMaker.DEFAULT_OPEN_SORT,
+            season=season,
+        )
 
     @app_commands.command(name="playins", description="Show Playin ladder standings")
     @app_commands.describe(season="Season number (defaults to the current one)")

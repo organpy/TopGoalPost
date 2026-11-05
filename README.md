@@ -206,7 +206,12 @@ completed matches when requested and is not capped at 100.
 View the standings:
 
 ```
-/open                      # rendered image, sortable
+/open                      # rendered image, A–Z by default
+/open sort:wins            # wins, then GD and goals
+/open sort:gd              # goal difference
+/open sort:goals           # goals scored
+/open sort:hp              # fewest losses
+/open sort:name            # A–Z
 ```
 
 Admin utilities:
@@ -427,7 +432,7 @@ not rename the Discord nickname.
 | `/report` | Pick match, then preset or custom score |
 | `/forfeit match_id:X` | Concede a match |
 | `/list_matches [stage] [status] [round_num] [player] [page]` | Browse matches with filters |
-| `/open`, `/playins`, `/swiss` | Standings images (`season:N` for a past season) |
+| `/open [sort:wins\|gd\|goals\|hp\|name]`, `/playins`, `/swiss` | Standings images (`season:N` for a past season); `/open` rows can be ordered by wins, GD, goals, HP or name |
 | `/playoff view:full\|winners\|losers` | Full bracket or one branch (`season:N` for a past season) |
 | `/seasons` | List seasons with status, champion and end date |
 | `/profile username:Name-or-ID [season:N]` | Season stats: games, wins, goals, GD, per-stage records |
@@ -594,7 +599,9 @@ are read-only: a season number can never be reused or reopened
 Every bracket command takes an optional `season:` (defaults to the active
 season), and renders are written per season (`open_s3.png`, `playin_s3.png`,
 `swiss_s3.png`, `playoff_s3_full.png`) so looking at an old season can never
-overwrite the live one. `/seasons` lists what is available:
+overwrite the live one. Open sort variants use their own files
+(`open_s3_wins.png`, `open_s3_gd.png`, and so on). `/seasons` lists what is
+available:
 
 ```
 /seasons
