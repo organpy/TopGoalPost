@@ -38,7 +38,7 @@ from bot.ui.confirm import confirm
 from bot.utils.countries import country_choices, resolve_country
 from bot.utils.names import clean_player_name, unsafe_name_reason
 from bot.utils.roles import set_member_role
-from bot.utils.threads import sync_player_threads
+from bot.utils.threads import replace_player_in_threads, sync_player_threads
 
 CLEAR_TOKENS = {"none", "clear", "-"}
 
@@ -913,14 +913,13 @@ class PlayerCog(commands.Cog):
             old_player.id, new_player.id, season_num
         )
         if interaction.guild:
-            if old_player.discord_id > 0:
-                await sync_player_threads(
-                    interaction.guild, old_player.discord_id, add=False
-                )
-            if new_player.discord_id > 0:
-                await sync_player_threads(
-                    interaction.guild, new_player.discord_id, add=True
-                )
+            await replace_player_in_threads(
+                interaction.guild,
+                old_player.discord_id,
+                old_player.name,
+                new_player.discord_id,
+                new_player.name,
+            )
         await interaction.followup.send(msg, ephemeral=True)
 
     @player.command(

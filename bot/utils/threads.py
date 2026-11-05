@@ -49,6 +49,155 @@ async def sync_player_threads(
             )
 
 
+def _replace_matchup_label(
+    description: str, old_label: str, new_label: str
+) -> tuple[str, bool]:
+    """Replace a player on one side of a pinned matchups line."""
+    lines = []
+    changed = False
+    for line in description.splitlines():
+        left, separator, right = line.partition(" vs ")
+        if separator and left == old_label:
+            line = f"{new_label}{separator}{right}"
+            changed = True
+        elif separator and right == old_label:
+            line = f"{left}{separator}{new_label}"
+            changed = True
+        lines.append(line)
+    return "\n".join(lines), changed
+
+
+def _replace_mentioned_player(
+    content: str, old_discord_id: int, new_discord_id: int, new_name: str
+) -> tuple[str, bool]:
+    """Swap the old thread mention for the substitute's mention or name."""
+    old_mention = f"<@{old_discord_id}>"
+    if old_discord_id <= 0 or old_mention not in content:
+        return content, False
+
+    new_label = f"<@{new_discord_id}>" if new_discord_id > 0 else new_name
+    parts = content.split()
+    if new_discord_id > 0:
+        parts = [part for part in parts if part != new_label]
+    parts = [new_label if part == old_mention else part for part in parts]
+    return " ".join(parts), True
+
+
+async def _update_pinned_matchups(
+    thread: discord.Thread,
+    old_discord_id: int,
+    old_name: str,
+    new_discord_id: int,
+    new_name: str,
+) -> None:
+    """Rewrite the pinned matchup card in one scheduling thread."""
+    old_label = _player_label(old_discord_id, old_name)
+    new_label = _player_label(new_discord_id, new_name)
+
+    try:
+        async for message in thread.pins():
+            if not message.author.bot:
+                continue
+            embed = next(
+                (
+                    item
+                    for item in message.embeds
+                    if item.title and item.title.endswith(" matchups")
+                ),
+                None,
+            )
+            if embed is None:
+                continue
+
+            description = embed.description or ""
+            new_description, description_changed = _replace_matchup_label(
+                description, old_label, new_label
+            )
+            content, content_changed = _replace_mentioned_player(
+                message.content or "", old_discord_id, new_discord_id, new_name
+            )
+            if not description_changed and not content_changed:
+                continue
+
+            payload = embed.to_dict()
+            payload["description"] = new_description[:4096]
+            try:
+                await message.edit(
+                    content=content,
+                    embed=discord.Embed.from_dict(payload),
+                    allowed_mentions=discord.AllowedMentions.none(),
+                )
+            except discord.HTTPException:
+                logger.warning("Could not update matchups in thread %s", thread.id)
+    except discord.HTTPException:
+        logger.warning("Could not read pinned messages in thread %s", thread.id)
+
+
+async def replace_player_in_threads(
+    guild: discord.Guild,
+    old_discord_id: int,
+    old_name: str,
+    new_discord_id: int,
+    new_name: str,
+) -> int:
+    """Swap a player only in scheduling threads that already contain them.
+
+    The replacement is added before the original is removed, so the thread
+    never loses its access to a participant. Pinned matchup cards are rewritten
+    in place; other threads are left untouched.
+    """
+    if old_discord_id <= 0 or old_discord_id == new_discord_id:
+        return 0
+
+    channel = await get_match_thread_channel(guild)
+    if not channel:
+        return 0
+
+    updated = 0
+    for thread in channel.threads:
+        try:
+            members = await thread.fetch_members()
+        except discord.HTTPException:
+            logger.warning("Could not list members of thread %s", thread.id)
+            continue
+        member_ids = {member.id for member in members}
+        if old_discord_id not in member_ids:
+            continue
+
+        if new_discord_id > 0 and new_discord_id not in member_ids:
+            try:
+                await thread.add_user(discord.Object(new_discord_id))
+            except discord.HTTPException:
+                logger.warning(
+                    "Could not add substitute %s to thread %s",
+                    new_discord_id,
+                    thread.id,
+                    exc_info=True,
+                )
+                continue
+
+        await _update_pinned_matchups(
+            thread,
+            old_discord_id,
+            old_name,
+            new_discord_id,
+            new_name,
+        )
+
+        if old_discord_id != new_discord_id:
+            try:
+                await thread.remove_user(discord.Object(old_discord_id))
+            except discord.HTTPException:
+                logger.warning(
+                    "Could not remove replaced player %s from thread %s",
+                    old_discord_id,
+                    thread.id,
+                    exc_info=True,
+                )
+        updated += 1
+    return updated
+
+
 def split_groups(player_ids: list[int]) -> list[list[int]]:
     """Split players into scheduling groups of ~3 with overlap for connectivity."""
     n = len(player_ids)

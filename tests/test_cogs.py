@@ -1494,13 +1494,19 @@ class TestPlayerAdmin:
         ):
             setattr(cog.match_service, method, AsyncMock(return_value="done"))
 
-        old_player = MagicMock(id=1, name="Old", discord_id=42)
-        new_player = MagicMock(id=2, name="New", discord_id=7)
+        old_player = MagicMock(id=1, discord_id=42)
+        old_player.name = "Old"
+        new_player = MagicMock(id=2, discord_id=7)
+        new_player.name = "New"
         cog.stats_service.resolve_player = AsyncMock(
             side_effect=[old_player, new_player]
         )
 
-        with patch.object(module, "confirm", AsyncMock(return_value=True)):
+        with patch.object(
+            module, "confirm", AsyncMock(return_value=True)
+        ), patch.object(
+            module, "replace_player_in_threads", AsyncMock()
+        ) as replace_player:
             await cog.remove_from_matches_cmd.callback(
                 cog, mock_interaction, target
             )
@@ -1516,6 +1522,9 @@ class TestPlayerAdmin:
             42, season=1
         )
         cog.match_service.substitute_player.assert_awaited_once_with(1, 2, 1)
+        replace_player.assert_awaited_once_with(
+            mock_interaction.guild, 42, "Old", 7, "New"
+        )
 
     async def test_substitute_creates_a_name_only_placeholder(
         self, mock_interaction, mock_bot

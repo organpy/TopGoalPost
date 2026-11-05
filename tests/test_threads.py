@@ -2,6 +2,8 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+import discord
+
 from bot.utils import threads
 from bot.utils.threads import create_scheduling_threads, players_without_thread, split_groups
 
@@ -38,6 +40,93 @@ async def test_create_threads_pins_matchups_and_mentions_group(monkeypatch):
     assert "<@1> vs <@2>" in first["embed"].description
     assert message.pin.await_count == 4
     thread.add_user.assert_not_awaited()
+
+
+async def test_replace_player_in_threads_only_updates_threads_with_old_player(monkeypatch):
+    message = MagicMock()
+    message.author.bot = True
+    message.content = "<@10> <@20>"
+    message.embeds = [
+        discord.Embed(
+            title="Open · Group 1 matchups",
+            description="<@10> vs <@20>\n<@30> vs <@40>",
+        )
+    ]
+    message.edit = AsyncMock()
+
+    async def pins():
+        yield message
+
+    old_thread = MagicMock(id=1)
+    old_thread.fetch_members = AsyncMock(
+        return_value=[MagicMock(id=10), MagicMock(id=20)]
+    )
+    old_thread.add_user = AsyncMock()
+    old_thread.remove_user = AsyncMock()
+    old_thread.pins = pins
+
+    other_thread = MagicMock(id=2)
+    other_thread.fetch_members = AsyncMock(return_value=[MagicMock(id=20)])
+    other_thread.add_user = AsyncMock()
+    other_thread.remove_user = AsyncMock()
+    other_thread.pins = pins
+
+    channel = MagicMock(threads=[old_thread, other_thread])
+    monkeypatch.setattr(
+        threads, "get_match_thread_channel", AsyncMock(return_value=channel)
+    )
+
+    updated = await threads.replace_player_in_threads(
+        MagicMock(), 10, "Old", 99, "New"
+    )
+
+    assert updated == 1
+    assert old_thread.add_user.await_args.args[0].id == 99
+    assert old_thread.remove_user.await_args.args[0].id == 10
+    other_thread.add_user.assert_not_awaited()
+    other_thread.remove_user.assert_not_awaited()
+    edit = message.edit.await_args.kwargs
+    assert edit["content"] == "<@99> <@20>"
+    assert edit["embed"].description == "<@99> vs <@20>\n<@30> vs <@40>"
+
+
+async def test_replace_player_in_threads_updates_card_for_name_only_substitute(
+    monkeypatch,
+):
+    message = MagicMock()
+    message.author.bot = True
+    message.content = "<@10>"
+    message.embeds = [
+        discord.Embed(
+            title="Open · Group 1 matchups",
+            description="<@10> vs <@20>",
+        )
+    ]
+    message.edit = AsyncMock()
+
+    async def pins():
+        yield message
+
+    thread = MagicMock(id=1)
+    thread.fetch_members = AsyncMock(return_value=[MagicMock(id=10)])
+    thread.add_user = AsyncMock()
+    thread.remove_user = AsyncMock()
+    thread.pins = pins
+    channel = MagicMock(threads=[thread])
+    monkeypatch.setattr(
+        threads, "get_match_thread_channel", AsyncMock(return_value=channel)
+    )
+
+    updated = await threads.replace_player_in_threads(
+        MagicMock(), 10, "Old", -1, "Ghost"
+    )
+
+    assert updated == 1
+    thread.add_user.assert_not_awaited()
+    assert thread.remove_user.await_args.args[0].id == 10
+    edit = message.edit.await_args.kwargs
+    assert edit["content"] == "Ghost"
+    assert edit["embed"].description == "Ghost vs <@20>"
 
 
 async def test_players_without_thread_only_checks_stage_threads():
