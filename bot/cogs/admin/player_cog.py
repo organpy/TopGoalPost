@@ -855,6 +855,33 @@ class PlayerCog(commands.Cog):
         await interaction.followup.send(msg, ephemeral=True)
 
     @player.command(
+        name="lose_all",
+        description="Give a player a 0-1 loss in all ready matches (not a withdrawal)",
+    )
+    @app_commands.describe(target="The player who loses")
+    @require_host_app()
+    async def lose_all_cmd(
+        self, interaction: discord.Interaction, target: discord.User
+    ):
+        await interaction.response.defer(ephemeral=True)
+        season_num = await self._season_or_reply(interaction)
+        if not season_num:
+            return
+        answer = await confirm(
+            interaction,
+            f"Record a 0-1 loss for {target.mention} in every ready match? "
+            "They are not withdrawn; losses can drop them into later matches "
+            "that are also lost, until none are ready.",
+        )
+        if not answer:
+            await interaction.followup.send("Cancelled.", ephemeral=True)
+            return
+        msg = await self.match_service.lose_all_player_matches(
+            target.id, season=season_num
+        )
+        await interaction.followup.send(msg, ephemeral=True)
+
+    @player.command(
         name="forfeit_many",
         description="Withdraw several players and forfeit all their matches",
     )

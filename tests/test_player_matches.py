@@ -140,3 +140,20 @@ class TestWithdraw:
         assert "2 match" in msg
         assert await self._winner(db, m1) == a.id
         assert await self._winner(db, m2) == a.id
+
+    async def test_lose_all_scores_losses_without_withdrawing(self, db, seed_data):
+        a, b, c = (p for p in seed_data["players"][:3])
+        async with db.get_session() as session:
+            event = await EventRepository(session).create("S1 Playin", EventType.PLAYIN, 1)
+            await session.commit()
+        m1, m2 = await self._chain(db, event.id, a.id, b.id, c.id)
+
+        msg = await MatchService().lose_all_player_matches(a.discord_id, season=1)
+
+        assert "0-1 loss in 1 match" in msg
+        assert await self._winner(db, m1) == b.id
+        assert not await _completed(db, m2)  # b vs c is not a's match
+        async with db.get_session() as session:
+            rows = (await session.execute(select(AuditLog))).scalars().all()
+        actions = {r.action for r in rows}
+        assert "score.forfeit" not in actions and "player.withdraw" not in actions
