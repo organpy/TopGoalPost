@@ -4,6 +4,7 @@ Inspect and edit any player's identity, availability, season stats and
 matches so the database never has to be touched by hand.
 """
 
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -801,7 +802,7 @@ class PlayerCog(commands.Cog):
         await interaction.followup.send(msg, ephemeral=True)
 
     @player.command(
-        name="forfeit_all", description="Forfeit all of a player's uncompleted matches"
+        name="forfeit_all", description="Withdraw a player and forfeit all their matches"
     )
     @app_commands.describe(target="The player to forfeit for")
     @require_host_app()
@@ -815,7 +816,8 @@ class PlayerCog(commands.Cog):
         answer = await confirm(
             interaction,
             f"Forfeit every uncompleted match for {target.mention}? "
-            "Opponents get a 1-0 win.",
+            "Opponents get a 1-0 win, and they are withdrawn: any later match "
+            "they are placed in is forfeited automatically.",
         )
         if not answer:
             await interaction.followup.send("Cancelled.", ephemeral=True)
@@ -824,6 +826,38 @@ class PlayerCog(commands.Cog):
         msg = await self.match_service.forfeit_all_player_matches(
             target.id, season=season_num
         )
+        await interaction.followup.send(msg, ephemeral=True)
+
+    @player.command(
+        name="forfeit_many",
+        description="Withdraw several players and forfeit all their matches",
+    )
+    @app_commands.describe(
+        targets="Mentions or Discord IDs, separated by spaces or commas"
+    )
+    @require_host_app()
+    async def forfeit_many_cmd(self, interaction: discord.Interaction, targets: str):
+        await interaction.response.defer(ephemeral=True)
+        season_num = await self._season_or_reply(interaction)
+        if not season_num:
+            return
+        ids = [int(m) for m in re.findall(r"\d{15,20}", targets)]
+        if not ids:
+            await interaction.followup.send(
+                "No user mentions or Discord IDs found.", ephemeral=True
+            )
+            return
+        mentions = " ".join(f"<@{i}>" for i in dict.fromkeys(ids))
+        answer = await confirm(
+            interaction,
+            f"Withdraw and forfeit every uncompleted match for {mentions}? "
+            "Opponents get a 1-0 win, and these players auto-forfeit any "
+            "later match they are placed in.",
+        )
+        if not answer:
+            await interaction.followup.send("Cancelled.", ephemeral=True)
+            return
+        msg = await self.match_service.withdraw_players(ids, season=season_num)
         await interaction.followup.send(msg, ephemeral=True)
 
     @player.command(

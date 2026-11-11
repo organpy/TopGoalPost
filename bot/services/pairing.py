@@ -285,7 +285,7 @@ class PairingService:
             season = event.season
             ps_repo = PlayerSeasonRepository(session)
             all_ps = await ps_repo.get_by_season(season)
-            active = [ps for ps in all_ps if ps.hp > 0 and (ps.swiss_seed is None or ps.swiss_seed == 0)]
+            active = [ps for ps in all_ps if ps.hp > 0 and not ps.withdrawn and (ps.swiss_seed is None or ps.swiss_seed == 0)]
             active_ids = [ps.player_id for ps in active]
 
             if len(active_ids) < 2:
@@ -428,7 +428,7 @@ class PairingService:
             all_ps = (await session.execute(stmt)).scalars().all()
             ring = [
                 ps.player_id for ps in all_ps
-                if ps.hp > 0 and (ps.swiss_seed is None or ps.swiss_seed == 0)
+                if ps.hp > 0 and not ps.withdrawn and (ps.swiss_seed is None or ps.swiss_seed == 0)
             ]
             if len(ring) < 2:
                 return 0, 0, "Not enough active players in open stage."

@@ -107,6 +107,8 @@ class PlayerSeason(Base):
     playin_wildcard: Mapped[bool] = mapped_column(Boolean, default=False)
     playin_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     hp: Mapped[int] = mapped_column(Integer, default=4)
+    # Nullable so startup sync can add it; None/False both mean "still playing".
+    withdrawn: Mapped[Optional[bool]] = mapped_column(Boolean, default=False, nullable=True)
 
     player: Mapped["Player"] = relationship(back_populates="player_seasons", foreign_keys=[player_id])
     season: Mapped["Season"] = relationship(back_populates="player_seasons", foreign_keys=[season_number])

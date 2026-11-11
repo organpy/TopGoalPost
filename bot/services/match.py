@@ -143,6 +143,8 @@ class MatchService:
             winner_side=winner_side,
             old_winner_side=old_winner_side,
         )
+        if event:
+            await self.resolve_withdrawn(event.season)
         result = {
             "match_id": match_id,
             "winner_id": winner_id,
@@ -155,8 +157,14 @@ class MatchService:
             result["playin_advance"] = playin_advance
         return result
 
-    async def forfeit(self, match_id: int, loser_id: int) -> Optional[dict]:
+    async def forfeit(
+        self, match_id: int, loser_id: int, _cascade: bool = True
+    ) -> Optional[dict]:
         """Forfeit a match. The other player gets a 1-0 win.
+
+        Afterwards any match a *withdrawn* player was fed into is forfeited
+        too (see :meth:`resolve_withdrawn`), so a withdrawn player never
+        advances on a free win or drops into a lower bracket.
 
         Returns None when the match cannot be forfeited, or ``{"error": ...}``
         when it belongs to an archived season.
@@ -213,6 +221,8 @@ class MatchService:
             await self._propagate(match_id)
 
         await audit.record("score.forfeit", "match", match_id, loser_player_id=loser_id)
+        if _cascade and event:
+            await self.resolve_withdrawn(event.season)
         result = {"match_id": match_id, "forfeited_by": loser_id}
         if playin_advance:
             result["playin_advance"] = playin_advance
@@ -997,16 +1007,130 @@ class MatchService:
             msg += f" Skipped {skipped} Swiss/Playoff match(es)."
         return msg
 
-    async def forfeit_all_player_matches(self, discord_id: int, season: int) -> str:
-        """Forfeit all of a player's uncompleted matches in ``season``.
+    async def resolve_withdrawn(self, season: int) -> int:
+        """Forfeit every ready match that has a withdrawn player in it.
 
-        Each match goes through :meth:`forfeit`, so brackets propagate, Open
-        stats sync and the forfeit is audited. Forfeits can create follow-up
-        matches (Bo3 games, losers bracket, next Playin round), so we repeat
-        until the player has nothing left to forfeit.
+        Propagation can place a withdrawn player into a new match (the winner
+        of a forfeit moves on, the loser drops to a lower bracket). Each pass
+        forfeits those matches, which may fill further slots, so repeat until
+        nothing is left. If both players are withdrawn, side 1 loses; the
+        bracket needs a winner and the next pass forfeits them as well.
 
-        Returns:
-            A human-readable result message.
+        Returns the number of matches forfeited.
+        """
+        forfeited = 0
+        for _ in range(500):  # bracket depth bound; guards against loops
+            target: Optional[tuple[int, int]] = None
+            async with self.db.get_session() as session:
+                rows = (
+                    await session.execute(
+                        select(PlayerSeason.player_id).where(
+                            and_(
+                                PlayerSeason.season_number == season,
+                                PlayerSeason.withdrawn.is_(True),
+                            )
+                        )
+                    )
+                ).scalars().all()
+                withdrawn = set(rows)
+                if not withdrawn:
+                    return forfeited
+                stmt = (
+                    select(Match)
+                    .join(Event, Match.event_id == Event.id)
+                    .options(selectinload(Match.match_players))
+                    .where(and_(Event.season == season, Match.completed_at.is_(None)))
+                    .order_by(Match.id)
+                )
+                for match in (await session.execute(stmt)).scalars().unique().all():
+                    mps = sorted(match.match_players, key=lambda mp: mp.side)
+                    if len(mps) < 2 or any(mp.player_id is None for mp in mps):
+                        continue
+                    bad = [mp.player_id for mp in mps if mp.player_id in withdrawn]
+                    if bad:
+                        # Both withdrawn -> bad[-1] is side 1, who loses.
+                        target = (match.id, bad[-1])
+                        break
+            if target is None:
+                return forfeited
+            result = await self.forfeit(target[0], target[1], _cascade=False)
+            if not result or "error" in result:
+                return forfeited
+            forfeited += 1
+        return forfeited
+
+    async def _forfeit_pending(self, player_id: int, season: int) -> int | str:
+        """Forfeit every ready match of one player, following Bo3/bracket
+        follow-ups. Returns the count, or an error string."""
+        forfeited = 0
+        tried: set[int] = set()
+        while True:
+            async with self.db.get_session() as session:
+                mps = await MatchPlayerRepository(session).get_unplayed_player_matches(
+                    player_id, season=season
+                )
+            pending = sorted({mp.match_id for mp in mps} - tried)
+            if not pending:
+                return forfeited
+            for match_id in pending:
+                tried.add(match_id)
+                result = await self.forfeit(match_id, player_id)
+                if result and "error" in result:
+                    return result["error"]
+                if result:
+                    forfeited += 1
+
+    async def withdraw_players(self, discord_ids: list[int], season: int) -> str:
+        """Withdraw several players at once.
+
+        Every player is flagged *before* any forfeit runs, so none of them can
+        pick up a free win from another's forfeit and advance in between.
+        """
+        from bot.db import PlayerRepository
+        from bot.services.season import SeasonService
+
+        if err := await SeasonService().require_active(season):
+            return err
+
+        ids = list(dict.fromkeys(discord_ids))
+        players: list[Player] = []
+        problems: list[str] = []
+        async with self.db.get_session() as session:
+            for discord_id in ids:
+                player = await PlayerRepository(session).get_by_discord_id(discord_id)
+                if not player:
+                    problems.append(f"{discord_id}: no such player")
+                    continue
+                ps = await session.get(PlayerSeason, (player.id, season))
+                if not ps:
+                    problems.append(f"{player.name}: not registered in season {season}")
+                    continue
+                ps.withdrawn = True
+                players.append(player)
+            await session.commit()
+
+        for player in players:
+            await audit.record("player.withdraw", "player", player.id, season=season)
+
+        forfeited = 0
+        for player in players:
+            result = await self._forfeit_pending(player.id, season)
+            if isinstance(result, str):
+                return result
+            forfeited += result
+        forfeited += await self.resolve_withdrawn(season)
+
+        msg = f"Withdrew {len(players)} player(s): forfeited {forfeited} match(es)."
+        if problems:
+            msg += " Skipped: " + "; ".join(problems) + "."
+        return msg
+
+    async def withdraw_player(self, discord_id: int, season: int) -> str:
+        """Take a player out of the season for good.
+
+        Marks them withdrawn, forfeits their ready matches and keeps forfeiting
+        whatever propagation feeds them, so a single call clears them from the
+        whole bracket however many rounds it takes.
         """
         from bot.db import PlayerRepository
         from bot.services.season import SeasonService
@@ -1018,28 +1142,32 @@ class MatchService:
             player = await PlayerRepository(session).get_by_discord_id(discord_id)
             if not player:
                 return f"No player found with Discord ID {discord_id}."
+            ps = await session.get(PlayerSeason, (player.id, season))
+            if not ps:
+                return f"{player.name} is not registered in season {season}."
+            ps.withdrawn = True
+            await session.commit()
 
-        forfeited = 0
-        tried: set[int] = set()
-        while True:
-            async with self.db.get_session() as session:
-                mps = await MatchPlayerRepository(session).get_unplayed_player_matches(
-                    player.id, season=season
-                )
-            pending = sorted({mp.match_id for mp in mps} - tried)
-            if not pending:
-                break
-            for match_id in pending:
-                tried.add(match_id)
-                result = await self.forfeit(match_id, player.id)
-                if result and "error" in result:
-                    return result["error"]
-                if result:
-                    forfeited += 1
+        await audit.record("player.withdraw", "player", player.id, season=season)
 
+        forfeited = await self._forfeit_pending(player.id, season)
+        if isinstance(forfeited, str):
+            return forfeited
+        forfeited += await self.resolve_withdrawn(season)
         if forfeited == 0:
-            return f"{player.name} has no uncompleted matches to forfeit."
-        return f"Forfeited {forfeited} match(es) for <@{discord_id}>."
+            return (
+                f"{player.name} is withdrawn and will auto-forfeit any match "
+                "they are placed in."
+            )
+        return (
+            f"Withdrew <@{discord_id}>: forfeited {forfeited} match(es). "
+            "They will auto-forfeit any match they are placed in later."
+        )
+
+    async def forfeit_all_player_matches(self, discord_id: int, season: int) -> str:
+        """Withdraw a player and forfeit all their matches (alias of
+        :meth:`withdraw_player`, kept for the ``/player forfeit_all`` command)."""
+        return await self.withdraw_player(discord_id, season)
 
     async def get_match_history(self, player_id: int, season: int) -> list[dict]:
         """Get completed match history for a player in a season.

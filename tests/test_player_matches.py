@@ -42,12 +42,12 @@ class TestForfeitAll:
             players[0].discord_id, season=1
         )
 
-        assert "Forfeited 1" in msg
+        assert "forfeited 1" in msg
         assert await _completed(db, current)
         assert not await _completed(db, old)
         async with db.get_session() as session:
             rows = (await session.execute(select(AuditLog))).scalars().all()
-        assert [r.action for r in rows] == ["score.forfeit"]
+        assert sorted(r.action for r in rows) == ["player.withdraw", "score.forfeit"]
 
     async def test_refuses_archived_season(self, db, seed_data):
         old = await _old_season_match(db, seed_data)
@@ -74,3 +74,56 @@ class TestRemoveFromMatches:
             old_ids = {mp.player_id for mp in await repo.get_by_match(old)}
         assert players[0].id not in current_ids
         assert players[0].id in old_ids
+
+
+class TestWithdraw:
+    async def _chain(self, db, event_id, a, b, c):
+        """m1: a vs b; m2: winner(m1) vs c, fed by propagation."""
+        m1 = await _match(db, event_id, a, b)
+        async with db.get_session() as session:
+            m2 = await MatchRepository(session).create(event_id)
+            m2.p1_prereq_id = m1
+            m2.p1_prereq_type = "winner"
+            mp_repo = MatchPlayerRepository(session)
+            await mp_repo.create(m2.id, 0, None)
+            await mp_repo.create(m2.id, 1, c)
+            await session.commit()
+            return m1, m2.id
+
+    async def _winner(self, db, match_id):
+        async with db.get_session() as session:
+            match = await MatchRepository(session).get_by_id(match_id)
+            w = match.get_winner()
+            return w.player_id if w else None
+
+    async def test_withdrawn_winner_does_not_advance(self, db, seed_data):
+        a, b, c = (p for p in seed_data["players"][:3])
+        async with db.get_session() as session:
+            event = await EventRepository(session).create("S1 Playin", EventType.PLAYIN, 1)
+            await session.commit()
+        m1, m2 = await self._chain(db, event.id, a.id, b.id, c.id)
+        svc = MatchService()
+
+        # b withdraws first, then a withdraws: a's forfeit hands b the win,
+        # but b is withdrawn so m2 must resolve to c without more commands.
+        await svc.withdraw_player(b.discord_id, season=1)
+        await svc.withdraw_player(a.discord_id, season=1)
+
+        assert await _completed(db, m1)
+        assert await _completed(db, m2)
+        assert await self._winner(db, m2) == c.id
+
+    async def test_withdraw_players_flags_everyone_first(self, db, seed_data):
+        a, b, c = (p for p in seed_data["players"][:3])
+        async with db.get_session() as session:
+            event = await EventRepository(session).create("S1 Playin", EventType.PLAYIN, 1)
+            await session.commit()
+        m1, m2 = await self._chain(db, event.id, a.id, b.id, c.id)
+
+        msg = await MatchService().withdraw_players(
+            [a.discord_id, b.discord_id, 999999999999999999], season=1
+        )
+
+        assert "Withdrew 2" in msg and "Skipped" in msg
+        assert await _completed(db, m2)
+        assert await self._winner(db, m2) == c.id

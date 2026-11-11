@@ -1078,7 +1078,7 @@ class TestPlayerAdmin:
         assert names == {
             "info", "set", "add", "stats", "add_weekly", "add_date", "remove_slot",
             "clear_slots", "remove_from_matches", "delete_matches",
-            "forfeit_all", "substitute", "reset_matches", "switch_id",
+            "forfeit_all", "forfeit_many", "substitute", "reset_matches", "switch_id",
         }
         for cmd in PlayerCog.player.commands:
             assert cmd.checks, f"{cmd.name} is missing require_host_app"
