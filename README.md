@@ -160,7 +160,7 @@ Players report scores:
 /report                    # pick match, then preset or custom score
 /set_score match_id:X p1_goals:N p2_goals:N   # admin override / correction
 /set_score_playoff match_id:X game:g1 p1_score:N p2_score:N
-/player forfeit_all target:@P                # forfeit all their matches
+/player forfeit_all target:@P                # withdraw + forfeit all their matches
 ```
 
 Open stats are rebuilt automatically after every score. `/tourney sync_open`
@@ -409,7 +409,10 @@ database. Every subcommand is host-only and replies ephemerally.
 | `/player clear_slots target:@P` | Delete all of a player's slots (confirm) |
 | `/player remove_from_matches target:@P` | Detach a player from uncompleted matches, keeping the matches |
 | `/player delete_matches target:@P` | Delete a player's uncompleted Open/Playin matches |
-| `/player forfeit_all target:@P` | Forfeit every uncompleted match |
+| `/player forfeit_all target:@P` | Withdraw the player: forfeit every uncompleted match and auto-forfeit any match they are placed in later (no free advancement or loser-bracket drop) |
+| `/player forfeit_many targets:"@A @B"` | Same as `forfeit_all` for several players (mentions or IDs); all are flagged before any forfeit runs |
+| `/player win_all target:@P` | Give the player a 1-0 win in every ready match (opponents forfeit), advancing until the next opponent is unknown |
+| `/player lose_all target:@P` | Record a 0-1 loss in every ready match as normal score reports; does **not** withdraw the player |
 | `/player substitute old:@P new:@P [country]` | Replace a player in all uncompleted matches; a missing replacement country is inherited from the old player |
 
 Destructive subcommands ask for a Confirm click first. `/player info` reports
