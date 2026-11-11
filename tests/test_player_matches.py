@@ -127,3 +127,16 @@ class TestWithdraw:
         assert "Withdrew 2" in msg and "Skipped" in msg
         assert await _completed(db, m2)
         assert await self._winner(db, m2) == c.id
+
+    async def test_win_all_advances_player_through_chain(self, db, seed_data):
+        a, b, c = (p for p in seed_data["players"][:3])
+        async with db.get_session() as session:
+            event = await EventRepository(session).create("S1 Playin", EventType.PLAYIN, 1)
+            await session.commit()
+        m1, m2 = await self._chain(db, event.id, a.id, b.id, c.id)
+
+        msg = await MatchService().win_all_player_matches(a.discord_id, season=1)
+
+        assert "2 match" in msg
+        assert await self._winner(db, m1) == a.id
+        assert await self._winner(db, m2) == a.id

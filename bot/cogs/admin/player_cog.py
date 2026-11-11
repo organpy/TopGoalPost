@@ -829,6 +829,32 @@ class PlayerCog(commands.Cog):
         await interaction.followup.send(msg, ephemeral=True)
 
     @player.command(
+        name="win_all",
+        description="Give a player a 1-0 win in all their remaining ready matches",
+    )
+    @app_commands.describe(target="The player who wins")
+    @require_host_app()
+    async def win_all_cmd(
+        self, interaction: discord.Interaction, target: discord.User
+    ):
+        await interaction.response.defer(ephemeral=True)
+        season_num = await self._season_or_reply(interaction)
+        if not season_num:
+            return
+        answer = await confirm(
+            interaction,
+            f"Give {target.mention} a 1-0 win in every ready match, advancing "
+            "them until their next opponent is unknown? Opponents forfeit.",
+        )
+        if not answer:
+            await interaction.followup.send("Cancelled.", ephemeral=True)
+            return
+        msg = await self.match_service.win_all_player_matches(
+            target.id, season=season_num
+        )
+        await interaction.followup.send(msg, ephemeral=True)
+
+    @player.command(
         name="forfeit_many",
         description="Withdraw several players and forfeit all their matches",
     )

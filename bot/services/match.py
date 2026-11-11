@@ -1164,6 +1164,56 @@ class MatchService:
             "They will auto-forfeit any match they are placed in later."
         )
 
+    async def win_all_player_matches(self, discord_id: int, season: int) -> str:
+        """Give a player a 1-0 win in every ready match, to the end of the bracket.
+
+        Each opponent forfeits through :meth:`forfeit`, so propagation, Bo3
+        follow-ups and withdrawn-player handling all behave as for a normal
+        forfeit. Stops when the player's next opponent is not known yet.
+        """
+        from bot.db import PlayerRepository
+        from bot.services.season import SeasonService
+
+        if err := await SeasonService().require_active(season):
+            return err
+
+        async with self.db.get_session() as session:
+            player = await PlayerRepository(session).get_by_discord_id(discord_id)
+            if not player:
+                return f"No player found with Discord ID {discord_id}."
+            ps = await session.get(PlayerSeason, (player.id, season))
+            if ps and ps.withdrawn:
+                return f"{player.name} is withdrawn; they cannot win matches."
+
+        won = 0
+        tried: set[int] = set()
+        while True:
+            async with self.db.get_session() as session:
+                mps = await MatchPlayerRepository(session).get_unplayed_player_matches(
+                    player.id, season=season
+                )
+                pending: dict[int, int] = {}
+                for mp in mps:
+                    if mp.match_id in tried:
+                        continue
+                    others = await MatchPlayerRepository(session).get_by_match(mp.match_id)
+                    opp = [o.player_id for o in others if o.player_id not in (None, player.id)]
+                    if len(opp) == 1:
+                        pending[mp.match_id] = opp[0]
+            if not pending:
+                break
+            for match_id, opponent_id in sorted(pending.items()):
+                tried.add(match_id)
+                result = await self.forfeit(match_id, opponent_id)
+                if result and "error" in result:
+                    return result["error"]
+                if result:
+                    won += 1
+        await audit.record("player.win_all", "player", player.id, season=season, matches=won)
+        if won == 0:
+            return f"{player.name} has no ready matches to win."
+        return f"Gave <@{discord_id}> a 1-0 win in {won} match(es)."
+
     async def forfeit_all_player_matches(self, discord_id: int, season: int) -> str:
         """Withdraw a player and forfeit all their matches (alias of
         :meth:`withdraw_player`, kept for the ``/player forfeit_all`` command)."""
