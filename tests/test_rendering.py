@@ -980,3 +980,41 @@ def test_concurrent_atomic_saves_leave_a_valid_png(tmp_path):
         result.verify()
     assert target.stat().st_size > 0
     assert list(tmp_path.glob(".table-*")) == []
+
+
+async def test_playin_board_drops_columns_for_short_redraw(db, tmp_path, monkeypatch):
+    from bot.db import Player, PlayerSeason
+    from bot.rendering import StandingsMaker as standings
+    from bot.rendering import asset_path as real_asset_path
+    from bot.services.playin import clear_redraw, generate_redraw, plan_redraw
+
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        await session.flush()
+        rows = []
+        for i in range(36):
+            p = Player(discord_id=800 + i, name=f"P{i}", country="us")
+            session.add(p)
+            await session.flush()
+            ps = PlayerSeason(player_id=p.id, season_number=1, open_wins=2 if i < 30 else 1, hp=4)
+            session.add(ps)
+            rows.append(ps)
+        await session.commit()
+
+    plan = plan_redraw(rows)
+    assert plan["rounds"] == 2  # 6 players for 2 places: paths of 3
+    await generate_redraw(1, plan)
+
+    widths = {}
+    for mode in ("redraw", "regular"):
+        target = tmp_path / f"{mode}.png"
+        monkeypatch.setattr(
+            standings, "asset_path",
+            lambda *parts, t=target: str(t) if parts[0] == "tables" else real_asset_path(*parts),
+        )
+        await standings.get_playin(1)
+        with Image.open(target) as img:
+            widths[mode] = img.size[0]
+        await clear_redraw(1)
+
+    assert widths["redraw"] < widths["regular"]

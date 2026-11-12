@@ -829,6 +829,22 @@ class PlayerCog(commands.Cog):
         await interaction.followup.send(msg, ephemeral=True)
 
     @player.command(
+        name="unwithdraw",
+        description="Clear a player's withdrawn/forfeited flag so they can play again",
+    )
+    @app_commands.describe(target="The player to bring back")
+    @require_host_app()
+    async def unwithdraw_cmd(
+        self, interaction: discord.Interaction, target: discord.User
+    ):
+        await interaction.response.defer(ephemeral=True)
+        season_num = await self._season_or_reply(interaction)
+        if not season_num:
+            return
+        msg = await self.match_service.unwithdraw_player(target.id, season_num)
+        await interaction.followup.send(msg, ephemeral=True)
+
+    @player.command(
         name="win_all",
         description="Give a player a 1-0 win in all their remaining ready matches",
     )

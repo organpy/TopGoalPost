@@ -1914,7 +1914,7 @@ class TestTournamentFlow:
             "bot.services.tournament_flow.prerender", prerender
         )
 
-        result = await TournamentFlowService().start_playins(1)
+        result = await TournamentFlowService().start_playins(1, allow_short=True)
 
         assert result["ok"] is True
         prerender.assert_awaited_once_with("OPEN", 1)
@@ -2766,3 +2766,356 @@ async def test_swap_open_players_trades_opponents(db, seed_data):
         match.completed_at = datetime.utcnow()
         await session.commit()
     assert "already has a played" in (await svc.swap_open_players(1, a, b))["error"]
+
+
+# ── Swiss preview / fill ───────────────────────────────────
+
+async def _swiss_fill_season(db, *, seeds=0, ranked=0, open_pairs=0, extra=0):
+    """Season 1 with ``seeds`` Open skippers, ``ranked`` Playin qualifiers,
+    ``open_pairs`` finished Open matches (winner GD = pair index + 1) and
+    ``extra`` unranked players with no Open result."""
+    from datetime import datetime
+
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        await session.flush()
+        players = []
+        total = seeds + ranked + open_pairs * 2 + extra
+        for i in range(total):
+            p = await PlayerRepository(session).create(
+                discord_id=9000 + i, name=f"F{i:02d}", country="US"
+            )
+            players.append(p)
+            ps = PlayerSeason(player_id=p.id, season_number=1, hp=4, open_wins=0)
+            if i < seeds:
+                ps.swiss_seed = i + 1
+            elif i < seeds + ranked:
+                ps.playin_rank = i - seeds + 1
+                ps.open_wins = 2
+            session.add(ps)
+        event = await EventRepository(session).create("Open", EventType.OPEN, 1)
+        mp_repo = MatchPlayerRepository(session)
+        base = seeds + ranked
+        for k in range(open_pairs):
+            match = await MatchRepository(session).create(event.id)
+            w = await mp_repo.create(match.id, side=0, player_id=players[base + 2 * k].id)
+            l = await mp_repo.create(match.id, side=1, player_id=players[base + 2 * k + 1].id)
+            w.goals, w.is_winner = k + 1, True
+            l.goals, l.is_winner = 0, False
+            match.completed_at = datetime.utcnow()
+        await session.commit()
+    return players
+
+
+class TestSwissFill:
+    @pytest.fixture(autouse=True)
+    def _no_render(self, monkeypatch):
+        monkeypatch.setattr("bot.services.tournament_flow.prerender", AsyncMock())
+
+    async def test_skip_playins_from_open(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        players = await _swiss_fill_season(db, seeds=4, open_pairs=18)
+        await Config().set_season_state("OPEN")
+        flow = TournamentFlowService()
+
+        # Pick a 0-win player so they jump ahead of the auto-fill.
+        loser = players[4 + 1]
+        preview = await flow.preview_swiss(1, [loser.name])
+
+        assert preview["ok"] and preview["skip_playins"]
+        assert preview["short"] == 0
+        assert len(preview["field"]) == 32
+        assert [r["source"] for r in preview["field"][:5]] == ["seed"] * 4 + ["pick"]
+        assert preview["field"][4]["player_id"] == loser.id
+        # Best Open winner (largest GD) is the first auto-fill.
+        assert preview["field"][5]["player_id"] == players[4 + 2 * 17].id
+        assert await Config().get_season_state() == "OPEN"  # preview writes nothing
+
+        result = await flow.start_swiss_filled(1, preview["fill_ids"])
+
+        assert result["ok"], result
+        assert result["advanced_from"] == "OPEN"
+        assert len(result["matches"]) == 16
+        assert await Config().get_season_state() == "SWISS"
+        async with db.get_session() as session:
+            from bot.services.pairing import PairingService
+            order = await PairingService()._swiss_eligible(session, 1)
+        assert order == [r["player_id"] for r in preview["field"]]
+
+    async def test_fill_short_playin_field(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await _swiss_fill_season(db, seeds=8, ranked=14, open_pairs=6)
+        async with db.get_session() as session:
+            await EventRepository(session).create("Playin", EventType.PLAYIN, 1)
+            await session.commit()
+        await Config().set_season_state("PLAYIN")
+        flow = TournamentFlowService()
+
+        readiness = await flow.readiness(1)
+        assert any("22/32" in b for b in readiness["blockers"])
+
+        preview = await flow.preview_swiss(1)
+        assert preview["skip_playins"] is False
+        assert preview["qualified"] == 22
+        assert len(preview["fill_ids"]) == 10
+
+        result = await flow.start_swiss_filled(1, preview["fill_ids"])
+        assert result["ok"], result
+        assert await Config().get_season_state() == "SWISS"
+
+    async def test_not_enough_players_cannot_confirm(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await _swiss_fill_season(db, seeds=4, open_pairs=5)
+        await Config().set_season_state("OPEN")
+        flow = TournamentFlowService()
+
+        preview = await flow.preview_swiss(1)
+        assert preview["short"] == 18
+
+        result = await flow.start_swiss_filled(1, preview["fill_ids"])
+        assert "changed since the preview" in result["error"]
+        assert await Config().get_season_state() == "OPEN"
+
+    async def test_stale_preview_is_refused(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        players = await _swiss_fill_season(db, seeds=8, ranked=14, open_pairs=6)
+        await Config().set_season_state("PLAYIN")
+        flow = TournamentFlowService()
+        preview = await flow.preview_swiss(1)
+
+        async with db.get_session() as session:
+            ps = await PlayerSeasonRepository(session).get(preview["fill_ids"][0], 1)
+            ps.withdrawn = True
+            await session.commit()
+
+        result = await flow.start_swiss_filled(1, preview["fill_ids"])
+        assert "changed since the preview" in result["error"]
+        assert await Config().get_season_state() == "PLAYIN"
+
+    async def test_bad_picks_are_reported(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        players = await _swiss_fill_season(db, seeds=8, ranked=14, open_pairs=6)
+        await Config().set_season_state("PLAYIN")
+
+        preview = await TournamentFlowService().preview_swiss(
+            1, ["nobody", players[0].name]
+        )
+        assert "`nobody`: player not found" in preview["error"]
+        assert "already in the field" in preview["error"]
+
+    async def test_refused_once_swiss_exists(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await _swiss_fill_season(db, seeds=8, ranked=14, open_pairs=6)
+        await Config().set_season_state("PLAYIN")
+        flow = TournamentFlowService()
+        preview = await flow.preview_swiss(1)
+        assert (await flow.start_swiss_filled(1, preview["fill_ids"]))["ok"]
+
+        await Config().set_season_state("PLAYIN")
+        again = await flow.preview_swiss(1)
+        assert "already exists" in again["error"]
+
+
+# ── Single-elim Playin redraw ──────────────────────────────
+
+def _ps(pid, wins, gd=0, seed=None, withdrawn=False):
+    return PlayerSeason(
+        player_id=pid, season_number=1, open_wins=wins, open_gd=gd,
+        swiss_seed=seed, withdrawn=withdrawn, hp=4,
+    )
+
+
+class TestPlanRedraw:
+    def _field(self):
+        """4 seeds, 26 players with 2+ wins, 11 one-winners (2 withdrawn), 3 zero."""
+        ps = [_ps(i, 0, seed=i) for i in range(1, 5)]
+        ps += [_ps(100 + i, 2 + i % 3, gd=i) for i in range(26)]
+        ps += [_ps(200 + i, 1, gd=10 - i) for i in range(11)]
+        ps[-1].withdrawn = ps[-2].withdrawn = True
+        ps += [_ps(300 + i, 0) for i in range(3)]
+        return ps
+
+    def test_users_case_nine_for_two(self):
+        from bot.services.playin import plan_redraw
+
+        plan = plan_redraw(self._field())
+        assert "error" not in plan
+        assert plan["seeds"] + len(plan["direct"]) == 30
+        assert plan["slots"] == 2
+        assert len(plan["contestants"]) == 9
+        assert not {209, 210} & set(plan["contestants"])
+        assert plan["rounds"] == 3
+        assert len(plan["nodes"]) == 9 - 2
+        # Every contestant plays at least once.
+        played = {s[1] for n in plan["nodes"] for s in n["sides"] if s[0] == "p"}
+        assert played == set(plan["contestants"])
+        # The two worst play each other first; best seeds skip round 1.
+        r1 = [n for n in plan["nodes"] if n["round"] == 1]
+        assert len(r1) == 1
+        assert {s[1] for s in r1[0]["sides"]} == set(plan["contestants"][-2:])
+        assert all(n["round"] > 1 for n in plan["nodes"] if ["p", plan["contestants"][0]] in n["sides"])
+        # Exactly one final per place.
+        assert sum(n["round"] == 3 for n in plan["nodes"]) == 2
+
+    def test_pull_back_worst_and_by_name(self):
+        from bot.services.playin import plan_redraw
+
+        plan = plan_redraw(self._field(), pull_back_worst=1, pull_back_ids=[125])
+        assert plan["slots"] == 4
+        assert set(plan["pulled_back"]) == {125, plan["pulled_back"][1]}
+        worst = min(
+            (p for p in self._field() if p.player_id // 100 == 1 and p.player_id != 125),
+            key=lambda p: (p.open_wins, p.open_gd, -p.player_id),
+        )
+        assert plan["pulled_back"][1] == worst.player_id
+        # Pulled-back 2+ win players are the top seeds of the knockout.
+        assert set(plan["contestants"][:2]) == set(plan["pulled_back"])
+
+    def test_too_many_rounds_asks_for_pull_back(self):
+        from bot.services.playin import plan_redraw
+
+        ps = [_ps(i, 2) for i in range(30)]
+        ps += [_ps(100 + i, 1) for i in range(20)]
+        plan = plan_redraw(ps)
+        assert plan["needed"] == 1
+        assert "Pull back at least **1**" in plan["error"]
+        assert "error" not in plan_redraw(ps, pull_back_worst=1)
+
+    def test_rounds_shrink_with_fewer_contestants(self):
+        from bot.services.playin import plan_redraw
+
+        ps = [_ps(i, 2) for i in range(30)] + [_ps(100 + i, 1) for i in range(4)]
+        plan = plan_redraw(ps)
+        assert plan["rounds"] == 1
+        assert len(plan["nodes"]) == 2
+
+
+class TestRedrawFlow:
+    @pytest.fixture(autouse=True)
+    def _no_render(self, monkeypatch):
+        monkeypatch.setattr("bot.services.tournament_flow.prerender", AsyncMock())
+        monkeypatch.setattr("bot.services.playin.prerender", AsyncMock())
+
+    async def _season(self, db, winners=30, one_win=9):
+        """Finished Open: ``winners`` players with 2 wins, ``one_win`` with 1."""
+        from datetime import datetime
+
+        async with db.get_session() as session:
+            session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+            await session.flush()
+            players = []
+            for i in range(winners + one_win + 1):
+                players.append(
+                    await PlayerRepository(session).create(
+                        discord_id=5000 + i, name=f"R{i:02d}", country="US"
+                    )
+                )
+                session.add(PlayerSeason(player_id=players[-1].id, season_number=1, hp=4))
+            event = await EventRepository(session).create("Open", EventType.OPEN, 1)
+            mp_repo = MatchPlayerRepository(session)
+            loser = players[-1]
+
+            async def win(p, goals):
+                match = await MatchRepository(session).create(event.id)
+                w = await mp_repo.create(match.id, side=0, player_id=p.id)
+                l = await mp_repo.create(match.id, side=1, player_id=loser.id)
+                w.goals, w.is_winner = goals, True
+                l.goals, l.is_winner = 0, False
+                match.completed_at = datetime.utcnow()
+
+            for i, p in enumerate(players[:winners]):
+                await win(p, 1)
+                await win(p, 1)
+            for i, p in enumerate(players[winners:winners + one_win]):
+                await win(p, i + 1)
+            await session.commit()
+        return players
+
+    async def test_start_playins_stops_when_short(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await self._season(db)
+        await Config().set_season_state("OPEN")
+        result = await TournamentFlowService().start_playins(1)
+
+        assert result.get("short")
+        assert result["short"]["short_by"] > 0
+        assert "1W 9" in result["short_text"]
+        assert result["redraw_preview"]["ok"]
+        assert await Config().get_season_state() == "OPEN"
+
+    async def test_redraw_plays_through_to_swiss(self, db):
+        from bot.config import Config
+        from bot.services.match import MatchService
+        from bot.services.pairing import PairingService
+        from bot.services.playin import get_redraw
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await self._season(db)
+        await Config().set_season_state("OPEN")
+        flow = TournamentFlowService()
+        preview = await flow.preview_playin_redraw(1)
+        assert preview["slots"] == 2 and preview["rounds"] == 3
+
+        result = await flow.redraw_playins(1, 2, [], 0, preview["signature"])
+        assert result["ok"], result
+        assert await Config().get_season_state() == "PLAYIN"
+        assert (await get_redraw(1))["slots"] == 2
+
+        # Score every match (side 0 wins) in round order until Playins finish.
+        for _ in range(10):
+            async with db.get_session() as session:
+                event = await EventRepository(session).get_by_type_and_season(EventType.PLAYIN, 1)
+                ready = [
+                    m for m in await MatchRepository(session).get_by_event(event.id)
+                    if m.completed_at is None
+                    and all(mp.player_id for mp in m.match_players)
+                ]
+            if not ready:
+                break
+            for m in ready:
+                await MatchService().report_score(m.id, 1, 0, 0)
+
+        async with db.get_session() as session:
+            field = await PairingService()._swiss_eligible(session, 1)
+        assert len(field) == 32
+
+    async def test_stale_signature_is_refused(self, db):
+        from bot.config import Config
+        from bot.services.tournament_flow import TournamentFlowService
+
+        await self._season(db)
+        await Config().set_season_state("OPEN")
+        result = await TournamentFlowService().redraw_playins(1, 2, [], 0, [[], [], []])
+        assert "changed since the preview" in result["error"]
+        assert await Config().get_season_state() == "OPEN"
+
+
+class TestUnwithdraw:
+    async def test_clears_flag(self, db, seed_data):
+        from bot.services.match import MatchService
+
+        player = seed_data["players"][0]
+        async with db.get_session() as session:
+            ps = await session.get(PlayerSeason, (player.id, 1))
+            ps.withdrawn = True
+            await session.commit()
+
+        msg = await MatchService().unwithdraw_player(player.discord_id, 1)
+        assert "no longer withdrawn" in msg
+        async with db.get_session() as session:
+            assert not (await session.get(PlayerSeason, (player.id, 1))).withdrawn
+        assert "is not withdrawn" in await MatchService().unwithdraw_player(player.discord_id, 1)

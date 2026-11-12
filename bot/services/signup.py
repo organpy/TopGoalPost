@@ -23,6 +23,25 @@ from bot.utils.countries import resolve_country
 from bot.utils.names import clean_player_name
 
 
+async def find_player(session, raw: str) -> Optional[Player]:
+    """Resolve a Discord ID, mention, or (case-insensitive) name to a Player."""
+    token = raw.strip().strip("<@!>")
+    if not token:
+        return None
+    repo = PlayerRepository(session)
+    player = None
+    if token.isdigit():
+        player = await repo.get_by_discord_id(int(token))
+    if player is None:
+        player = await repo.get_by_name(token)
+    if player is None:
+        result = await session.execute(
+            select(Player).where(func.lower(Player.name) == token.lower())
+        )
+        player = result.scalars().first()
+    return player
+
+
 class SignupService:
     def __init__(self):
         self.db = get_db_manager()
@@ -277,19 +296,7 @@ class SignupService:
                 token = raw.strip()
                 if not token:
                     continue
-                token = token.strip("<@!>")
-                player = None
-                if token.isdigit():
-                    player = await player_repo.get_by_discord_id(int(token))
-                if player is None:
-                    player = await player_repo.get_by_name(token)
-                if player is None:
-                    result = await session.execute(
-                        select(Player).where(
-                            func.lower(Player.name) == token.lower()
-                        )
-                    )
-                    player = result.scalars().first()
+                player = await find_player(session, token)
                 if player is None:
                     errors.append(f"`{raw}`: player not found.")
                     continue

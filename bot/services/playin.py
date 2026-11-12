@@ -59,8 +59,10 @@ def compute_playin_math(
 
     ``target`` defaults to ``32 - returning_seeds``. The best three-win
     players are taken directly until the base ladder reaches the target;
-    the worst three-win players enter R3.
+    the worst three-win players enter R3. Withdrawn players are left out:
+    they would only forfeit, so they never count toward the field.
     """
+    all_ps = [ps for ps in all_ps if not ps.withdrawn]
     returning_seeds = sum(
         1 for ps in all_ps if ps.swiss_seed is not None and ps.swiss_seed > 0
     )
@@ -294,6 +296,14 @@ class PlayinService:
         if matches and any(match.completed_at is None for match in matches):
             return None
 
+        redraw = await get_redraw(season)
+        if redraw is not None:
+            # A redraw never has a cut round; its finals decide the places.
+            if not await self._playins_finalized(season):
+                await finish_redraw(season, redraw)
+                return {"action": "finished"}
+            return None
+
         has_cut = any(
             (match.series_game or 0) >= CUT_ROUND for match in matches
         )
@@ -409,6 +419,10 @@ class PlayinService:
 
     async def finish_playins(self, season: int) -> None:
         """Rank exactly the target number of qualifiers and eliminate the rest."""
+        redraw = await get_redraw(season)
+        if redraw is not None:
+            await finish_redraw(season, redraw)
+            return
         # The cut round is computed from R3 results, so R1-R3 must be final
         # before it may be created; otherwise partial results decide the cut.
         async with self.db.get_session() as session:
@@ -638,3 +652,277 @@ class PlayinService:
             )
             await session.commit()
             return event
+
+
+# ── Redraw ladder ───────────────────────────────────────────
+# A replacement Playin used when the stepped ladder cannot fill Swiss. Every
+# unseeded player with ``min_wins`` or more Open wins goes straight through;
+# the remaining places are contested by the lower-win players, one small
+# knockout path per place. Best entrants get the byes, so the worst players
+# meet first and the survivors face the best. Paths finish in the same round.
+
+REDRAW_MAX_ROUNDS = 3
+REDRAW_MAX_PATH = 1 << REDRAW_MAX_ROUNDS
+
+
+def redraw_key(season: int) -> str:
+    return f"playin_redraw_s{season}"
+
+
+async def get_redraw(season: int) -> Optional[dict[str, Any]]:
+    """The stored redraw plan for ``season``, or None for the normal ladder."""
+    import json
+    from bot.config import Config
+
+    raw = await Config().get(redraw_key(season))
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
+
+
+async def clear_redraw(season: int) -> None:
+    from bot.config import Config
+
+    await Config().remove(redraw_key(season))
+
+
+def _seed_order(size: int) -> list[int]:
+    """Standard bracket order: 1 vs N, then the halves (1,8,4,5,2,7,3,6)."""
+    order = [1]
+    while len(order) < size:
+        n = len(order) * 2
+        order = [x for s in order for x in (s, n + 1 - s)]
+    return order
+
+
+def _rank_key(ps: PlayerSeason) -> tuple:
+    return (-(ps.open_wins or 0), -(ps.open_gd or 0), ps.player_id)
+
+
+def plan_redraw(
+    all_ps: list[PlayerSeason],
+    *,
+    min_wins: int = 2,
+    pull_back_ids: tuple[int, ...] | list[int] = (),
+    pull_back_worst: int = 0,
+) -> dict[str, Any]:
+    """Work out a redraw ladder. Pure: nothing is written.
+
+    Returns ``{"error", "needed"?}`` or the plan with ``direct``, ``free``,
+    ``contestants``, ``paths``, ``rounds`` and ``nodes`` (match blueprints in
+    creation order; a side is ``["p", player_id]`` or ``["m", node_index]``).
+    """
+    if min_wins < 2:
+        return {"error": "direct_min_wins must be at least 2."}
+    seeds = sum(
+        1 for ps in all_ps
+        if (ps.swiss_seed or 0) > 0 and not ps.withdrawn
+    )
+    active = [
+        ps for ps in all_ps
+        if not (ps.swiss_seed or 0) > 0 and not ps.withdrawn
+    ]
+    by_id = {ps.player_id: ps for ps in active}
+    direct_pool = sorted(
+        (ps for ps in active if (ps.open_wins or 0) >= min_wins), key=_rank_key
+    )
+    direct_ids = [ps.player_id for ps in direct_pool]
+
+    pulled: list[int] = []
+    for pid in pull_back_ids:
+        if pid not in direct_ids:
+            return {"error": "Only players who would go straight through can be pulled back."}
+        if pid not in pulled:
+            pulled.append(pid)
+    worst_left = [pid for pid in reversed(direct_ids) if pid not in pulled]
+    if pull_back_worst > len(worst_left):
+        return {"error": f"Only {len(worst_left)} direct player(s) left to pull back."}
+    pulled += worst_left[:pull_back_worst]
+
+    direct = [pid for pid in direct_ids if pid not in pulled]
+    slots = SWISS_FIELD_SIZE - seeds - len(direct)
+    contestants = sorted(
+        [by_id[pid] for pid in pulled]
+        + [ps for ps in active if 1 <= (ps.open_wins or 0) < min_wins],
+        key=_rank_key,
+    )
+    contestant_ids = [ps.player_id for ps in contestants]
+    n = len(contestant_ids)
+
+    base = {
+        "min_wins": min_wins,
+        "seeds": seeds,
+        "direct": direct,
+        "pulled_back": pulled,
+        "slots": slots,
+        "contestants": contestant_ids,
+    }
+    if slots <= 0:
+        return {
+            **base,
+            "error": (
+                f"{seeds} seeds + {len(direct)} players with {min_wins}+ wins "
+                f"already fill Swiss ({seeds + len(direct)}/{SWISS_FIELD_SIZE}). "
+                "Raise direct_min_wins or pull players back."
+            ),
+        }
+    if n < slots:
+        return {
+            **base,
+            "error": (
+                f"Only {n} contestant(s) for {slots} place(s); Swiss would still "
+                "be short. Use dashboard **Swiss Preview** to fill instead."
+            ),
+        }
+    if n > REDRAW_MAX_PATH * slots:
+        # Each pulled-back player adds one contestant and one place.
+        needed = -(-(n - REDRAW_MAX_PATH * slots) // (REDRAW_MAX_PATH - 1))
+        return {
+            **base,
+            "needed": needed,
+            "error": (
+                f"{n} contestants for {slots} place(s) needs more than "
+                f"{REDRAW_MAX_ROUNDS} rounds. Pull back at least **{needed}** "
+                "direct player(s): `pull_back_worst` or `pull_back` names."
+            ),
+        }
+
+    # Snake the contestants into one path per place so paths stay even.
+    paths: list[list[int]] = [[] for _ in range(slots)]
+    for i, pid in enumerate(contestant_ids):
+        lap, pos = divmod(i, slots)
+        paths[pos if lap % 2 == 0 else slots - 1 - pos].append(pid)
+
+    free = [path[0] for path in paths if len(path) == 1]
+    sizes = [1 << (len(path) - 1).bit_length() for path in paths]
+    rounds = max((s.bit_length() - 1 for s in sizes), default=0)
+
+    nodes: list[dict[str, Any]] = []
+    for path_idx, (path, size) in enumerate(zip(paths, sizes)):
+        if len(path) < 2:
+            continue
+        offset = rounds - (size.bit_length() - 1)
+        current: list[Optional[list]] = [
+            ["p", path[s - 1]] if s <= len(path) else None
+            for s in _seed_order(size)
+        ]
+        local = 0
+        while len(current) > 1:
+            local += 1
+            nxt: list[Optional[list]] = []
+            for i in range(0, len(current), 2):
+                a, b = current[i], current[i + 1]
+                if a is None or b is None:
+                    nxt.append(a or b)
+                    continue
+                nodes.append({
+                    "round": offset + local,
+                    "path": path_idx,
+                    "pos": i // 2,
+                    "sides": [a, b],
+                })
+                nxt.append(["m", len(nodes) - 1])
+            current = nxt
+
+    # Creation order: by round, then path, so feeders exist before use.
+    order = sorted(range(len(nodes)), key=lambda k: (nodes[k]["round"], nodes[k]["path"], nodes[k]["pos"]))
+    remap = {old: new for new, old in enumerate(order)}
+    ordered = []
+    per_round: dict[int, int] = defaultdict(int)
+    for old in order:
+        node = dict(nodes[old])
+        per_round[node["round"]] += 1
+        node["slot"] = f"P-R{node['round']}-M{per_round[node['round']]}"
+        node["sides"] = [
+            ["m", remap[side[1]]] if side[0] == "m" else side
+            for side in node["sides"]
+        ]
+        ordered.append(node)
+
+    return {
+        **base,
+        "paths": paths,
+        "free": free,
+        "rounds": rounds,
+        "nodes": ordered,
+    }
+
+
+async def generate_redraw(season: int, plan: dict[str, Any]) -> dict[str, int]:
+    """Write a planned redraw ladder into an empty Playin event and store the plan."""
+    import json
+    from bot.config import Config
+
+    service = PlayinService()
+    event = await service._get_or_create_playin_event(season)
+    async with service.db.get_session() as session:
+        if await MatchRepository(session).get_by_event(event.id):
+            raise ValueError("Playin event still has matches; delete them first.")
+        ids: list[int] = []
+        for node in plan["nodes"]:
+            sides = [
+                _Entrant(player_id=side[1]) if side[0] == "p" else _Entrant(prereq_id=ids[side[1]])
+                for side in node["sides"]
+            ]
+            match = await service._add_match(
+                session, event.id, node["round"], node["slot"], sides[0], sides[1]
+            )
+            ids.append(match.id)
+        await session.commit()
+
+    stored = {
+        key: plan[key]
+        for key in ("min_wins", "direct", "free", "pulled_back", "contestants", "slots", "rounds")
+    }
+    await Config().set(redraw_key(season), json.dumps(stored))
+    by_round: dict[int, int] = defaultdict(int)
+    for node in plan["nodes"]:
+        by_round[node["round"]] += 1
+    return dict(by_round)
+
+
+async def finish_redraw(season: int, plan: dict[str, Any]) -> None:
+    """Rank direct players, free passes and path winners; eliminate the rest."""
+    service = PlayinService()
+    async with service.db.get_session() as session:
+        event = await service._get_or_create_playin_event(season)
+        matches = await MatchRepository(session).get_by_event(event.id)
+        incomplete = [m for m in matches if m.completed_at is None]
+        if incomplete:
+            raise ValueError(f"Playins are not complete: {len(incomplete)} match(es) remain.")
+
+        final_round = plan.get("rounds") or 0
+
+        def slot_num(match: Match) -> int:
+            try:
+                return int((match.bracket_slot or "").rsplit("M", 1)[1])
+            except (IndexError, ValueError):
+                return match.id
+
+        winners = [
+            winner.player_id
+            for match in sorted(
+                (m for m in matches if m.series_game == final_round), key=slot_num
+            )
+            for winner in [match.get_winner()]
+            if winner and winner.player_id is not None
+        ]
+        ordered = list(dict.fromkeys(plan["direct"] + plan.get("free", []) + winners))
+
+        all_ps = await PlayerSeasonRepository(session).get_by_season(season)
+        rank = {pid: n for n, pid in enumerate(ordered, start=1)}
+        for ps in all_ps:
+            if (ps.swiss_seed or 0) > 0:
+                continue
+            if ps.player_id in rank:
+                ps.playin_rank = rank[ps.player_id]
+                ps.playin_eliminated = False
+            else:
+                ps.playin_rank = None
+                ps.playin_eliminated = True
+        await session.commit()
+
+    await prerender("PLAYIN", season)

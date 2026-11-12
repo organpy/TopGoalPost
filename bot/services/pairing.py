@@ -452,8 +452,11 @@ class PairingService:
         eligible = [
             ps
             for ps in all_ps
-            if (ps.swiss_seed and ps.swiss_seed > 0)
-            or (ps.playin_rank and ps.playin_rank > 0)
+            if not ps.withdrawn
+            and (
+                (ps.swiss_seed and ps.swiss_seed > 0)
+                or (ps.playin_rank and ps.playin_rank > 0)
+            )
         ]
         eligible.sort(
             key=lambda ps: (

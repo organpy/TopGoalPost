@@ -60,6 +60,27 @@ OFFSEASON → SIGNUP → OPEN → PLAYIN → SWISS → PLAYOFF → OFFSEASON
 | SWISS → PLAYOFF | `/tourney generate_playoffs` | any unplayed Swiss match; ≠16 players with 3 wins |
 | PLAYOFF → OFFSEASON | `/season close` | grand final not decided |
 
+Dashboard **Swiss Preview** (OPEN or PLAYIN, before Swiss exists) shows the
+32-player field and creates it only on confirm: seeds and Playin qualifiers
+first, then host-picked fill-ins, then the best remaining Open finishers
+(`TournamentFlowService.preview_swiss` / `start_swiss_filled`). Fillers get
+Playin ranks after the real qualifiers. From OPEN it skips Playins (forced
+OPEN → SWISS, audited as `stage.swiss_fill`). Withdrawn players never enter
+Swiss.
+
+Short Playins: `start_playins` projects the regular ladder (withdrawn players
+counted out) and, if it cannot reach 32, creates nothing and returns `short`
+numbers plus a redraw preview; slash/dashboard then offer **Regular anyway**
+(`allow_short=True`) or **Single-elim redraw**. `/tourney redraw_playins`
+(also a dashboard button) sends seeds + players with `direct_min_wins`+ Open
+wins straight through and runs one knockout path per remaining place, at most
+3 rounds, byes to the best, all finals in the last round
+(`bot/services/playin.py::plan_redraw`). If 3 rounds are not enough it asks
+for `pull_back_worst` / `pull_back`. The plan is stored in the
+`playin_redraw_s<N>` setting; finishing, rescoring and the board read it, and
+an Open correction clears it. `/player unwithdraw` clears the withdrawn flag
+(past forfeits stay).
+
 Stage actions generate first and advance only on success. Skips/rewinds need
 `force` (logged and audited). Score corrections rewind the stage through
 `SeasonService.advance_state(..., force=True)`; nothing else writes `stage`.

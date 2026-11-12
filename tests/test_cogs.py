@@ -1078,7 +1078,7 @@ class TestPlayerAdmin:
         assert names == {
             "info", "set", "add", "stats", "add_weekly", "add_date", "remove_slot",
             "clear_slots", "remove_from_matches", "delete_matches",
-            "forfeit_all", "forfeit_many", "win_all", "lose_all", "substitute", "reset_matches", "switch_id",
+            "forfeit_all", "forfeit_many", "unwithdraw", "win_all", "lose_all", "substitute", "reset_matches", "switch_id",
         }
         for cmd in PlayerCog.player.commands:
             assert cmd.checks, f"{cmd.name} is missing require_host_app"
@@ -2068,7 +2068,46 @@ class TestStageActionParity:
 
         view = DashboardView(mock_bot, MagicMock())
         labels = [item.label for item in view.children]
-        assert sum("Playins" in label and "Finish" not in label for label in labels) == 1
+        assert sum(
+            "Playins" in label and "Finish" not in label and "Redraw" not in label
+            for label in labels
+        ) == 1
+
+    def test_swiss_preview_only_in_open_and_playin(self, mock_bot):
+        from bot.ui.dashboard import DashboardView
+
+        for state, disabled in (("OPEN", False), ("PLAYIN", False), ("SWISS", True)):
+            view = DashboardView(mock_bot, MagicMock(), state=state)
+            assert view.swiss_preview.disabled is disabled
+
+    async def test_swiss_preview_confirm_runs_stage_through_cog(self, mock_bot):
+        from bot.ui.dashboard import SwissPreviewView
+
+        result = {"ok": True, "state": "SWISS", "advanced_from": "OPEN", "message": "done"}
+        cog = TournamentCog(mock_bot)
+        cog._run_stage = AsyncMock(return_value=result)
+        mock_bot.get_cog = MagicMock(return_value=cog)
+
+        view = SwissPreviewView(mock_bot, cog.flow_service, 42, [7, 8], can_confirm=True)
+        interaction = MagicMock()
+        interaction.response.edit_message = AsyncMock()
+        interaction.followup.send = AsyncMock()
+        with patch(
+            "bot.ui.dashboard.SeasonService.get_current_season_number",
+            AsyncMock(return_value=1),
+        ):
+            await view.confirm_btn.callback(interaction)
+
+        cog._run_stage.assert_awaited_once_with(
+            interaction.guild, cog.flow_service.start_swiss_filled, 1, [7, 8]
+        )
+        interaction.followup.send.assert_awaited_with("done", ephemeral=True)
+
+    def test_swiss_preview_confirm_disabled_when_short(self, mock_bot):
+        from bot.ui.dashboard import SwissPreviewView
+
+        view = SwissPreviewView(mock_bot, MagicMock(), 42, [], can_confirm=False)
+        assert view.confirm_btn.disabled
 
 
 def test_bot_messages_reference_existing_commands():
@@ -2197,3 +2236,25 @@ class TestSetupRoles:
 
         assert await Config().get("signup_role") is None
         assert "could not create **Signup** (Forbidden)" in mock_ctx.send.call_args[0][0]
+
+
+async def test_short_playins_asks_regular_or_redraw(mock_bot):
+    """A short regular ladder replies with the choice prompt, not a plain error."""
+    cog = TournamentCog(mock_bot)
+    cog.season_service.get_current_season_number = AsyncMock(return_value=1)
+    cog.flow_service.start_playins = AsyncMock(return_value={
+        "error": "short", "short": {"short_by": 1}, "short_text": "⚠️ short by 1",
+        "redraw_preview": {"ok": True, "message": "plan", "signature": [[1], [2], []]},
+    })
+    interaction = MagicMock()
+    interaction.user.id = 7
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+
+    await cog.slash_start_playins.callback(cog, interaction)
+
+    args, kwargs = interaction.followup.send.call_args
+    assert args[0] == "⚠️ short by 1"
+    labels = [child.label for child in kwargs["view"].children]
+    assert labels == ["Regular anyway", "Single-elim redraw", "Cancel"]
+    assert not kwargs["view"].children[1].disabled

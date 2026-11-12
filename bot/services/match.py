@@ -388,6 +388,10 @@ class MatchService:
     async def _reset_after_open_edit(self, season: int) -> None:
         """Open edits can change Playin pools and everything downstream."""
         await audit.record("reset.downstream", "season", season, after="OPEN")
+        from bot.services.playin import clear_redraw
+
+        # New Open results invalidate a redraw plan; Playins start over.
+        await clear_redraw(season)
         await self._delete_event_matches(season, EventType.PLAYIN)
         await self._delete_event_matches(season, EventType.SWISS)
         await self._delete_event_matches(season, EventType.PLAYOFF)
@@ -1124,6 +1128,31 @@ class MatchService:
         if problems:
             msg += " Skipped: " + "; ".join(problems) + "."
         return msg
+
+    async def unwithdraw_player(self, discord_id: int, season: int) -> str:
+        """Clear a player's withdrawn flag. Past forfeits are left as they are."""
+        from bot.db import PlayerRepository
+        from bot.services.season import SeasonService
+
+        if err := await SeasonService().require_active(season):
+            return err
+        async with self.db.get_session() as session:
+            player = await PlayerRepository(session).get_by_discord_id(discord_id)
+            if not player:
+                return "No such player."
+            ps = await session.get(PlayerSeason, (player.id, season))
+            if not ps:
+                return f"**{player.name}** is not registered in season {season}."
+            if not ps.withdrawn:
+                return f"**{player.name}** is not withdrawn."
+            ps.withdrawn = False
+            await session.commit()
+            name, player_id = player.name, player.id
+        await audit.record("player.unwithdraw", "player", player_id, season=season)
+        return (
+            f"**{name}** is no longer withdrawn and can be placed in matches again. "
+            "Matches already forfeited keep their result; correct one with `/set_score`."
+        )
 
     async def withdraw_player(self, discord_id: int, season: int) -> str:
         """Take a player out of the season for good.

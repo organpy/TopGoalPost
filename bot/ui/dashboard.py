@@ -109,11 +109,185 @@ class SkipOpenModal(discord.ui.Modal, title="Players skipping Open"):
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
+SOURCE_LABELS = {
+    "seed": "seed",
+    "playin": "playins",
+    "pick": "**picked**",
+    "auto": "**auto-fill**",
+}
+
+
+def swiss_preview_embed(preview: dict) -> discord.Embed:
+    """The proposed Swiss field in seed order, with where each player came from."""
+    title = "Swiss preview" + (" — skipping Playins" if preview.get("skip_playins") else "")
+    embed = discord.Embed(title=title, description=preview["message"], color=0x2b2d31)
+    lines = []
+    for row in preview["field"]:
+        extra = ""
+        if row["source"] == "auto":
+            extra = f" ({row['open_wins']}W, {row['open_gd']:+d} GD)"
+        lines.append(
+            f"`{row['seed']:>2}` {row['name']} · {SOURCE_LABELS[row['source']]}{extra}"
+        )
+    for start in range(0, len(lines), 16):
+        chunk = "\n".join(lines[start:start + 16])
+        embed.add_field(
+            name=f"Seeds {start + 1}–{start + len(lines[start:start + 16])}",
+            value=chunk[:1024],
+            inline=True,
+        )
+    embed.set_footer(text="Round 1 pairs seed 1 vs 32, 2 vs 31, …")
+    return embed
+
+
+class StageConfirmView(ReportingView):
+    """Confirm or cancel a previewed stage action, then run it through the cog."""
+
+    def __init__(self, bot: commands.Bot, author_id: int, action, args: tuple,
+                 can_confirm: bool = True):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.author_id = author_id
+        self.action = action
+        self.args = args
+        self.confirm_btn.disabled = not can_confirm
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "This preview belongs to someone else.", ephemeral=True
+            )
+            return False
+        return await super().interaction_check(interaction)
+
+    async def _close(self, interaction: discord.Interaction) -> None:
+        for child in self.children:
+            child.disabled = True
+        self.stop()
+        await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(label="Create", style=discord.ButtonStyle.danger, emoji="✅")
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._close(interaction)
+        season = await SeasonService().get_current_season_number()
+        if not season:
+            await interaction.followup.send("No active season.", ephemeral=True)
+            return
+        cog = self.bot.get_cog("TournamentCog")
+        if cog:
+            result = await cog._run_stage(interaction.guild, self.action, season, *self.args)
+        else:
+            result = await self.action(season, *self.args)
+        await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._close(interaction)
+        await interaction.followup.send("Cancelled; nothing was created.", ephemeral=True)
+
+
+class SwissPreviewView(StageConfirmView):
+    """Confirm or cancel a previewed Swiss field."""
+
+    def __init__(self, bot: commands.Bot, flow: TournamentFlowService, author_id: int,
+                 fill_ids: list[int], can_confirm: bool):
+        super().__init__(bot, author_id, flow.start_swiss_filled, (fill_ids,), can_confirm)
+        self.fill_ids = fill_ids
+
+
+class RedrawPlayinsModal(discord.ui.Modal, title="Redraw Playins"):
+    """Options for ``/tourney redraw_playins``; shows the plan before creating it."""
+
+    def __init__(self, bot: commands.Bot, flow: TournamentFlowService):
+        super().__init__()
+        self.bot = bot
+        self.flow = flow
+        self.min_wins = discord.ui.TextInput(
+            label="Open wins that go straight to Swiss",
+            default="2", required=True, max_length=1,
+        )
+        self.pull_back = discord.ui.TextInput(
+            label="Pull back these direct players (optional)",
+            placeholder="Names, IDs or mentions, comma-separated",
+            required=False, max_length=1000, style=discord.TextStyle.paragraph,
+        )
+        self.pull_back_worst = discord.ui.TextInput(
+            label="Pull back N worst direct players (optional)",
+            default="0", required=False, max_length=2,
+        )
+        self.add_item(self.min_wins)
+        self.add_item(self.pull_back)
+        self.add_item(self.pull_back_worst)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        season = await SeasonService().get_current_season_number()
+        if not season:
+            await interaction.followup.send("No active season.", ephemeral=True)
+            return
+        try:
+            min_wins = int(self.min_wins.value or 2)
+            worst = int(self.pull_back_worst.value or 0)
+        except ValueError:
+            await interaction.followup.send("Wins and N must be numbers.", ephemeral=True)
+            return
+        picks = [p.strip() for p in (self.pull_back.value or "").split(",") if p.strip()]
+        preview = await self.flow.preview_playin_redraw(season, min_wins, picks, worst)
+        if preview.get("error"):
+            await interaction.followup.send(preview["error"], ephemeral=True)
+            return
+        view = StageConfirmView(
+            self.bot, interaction.user.id, self.flow.redraw_playins,
+            (min_wins, picks, worst, preview["signature"]),
+        )
+        await interaction.followup.send(
+            f"**Playin redraw**\n{preview['message']}", view=view, ephemeral=True
+        )
+
+
+class SwissFillModal(discord.ui.Modal, title="Swiss preview"):
+    """Ask for optional hand-picked fillers, then show the proposed field."""
+
+    def __init__(self, bot: commands.Bot, flow: TournamentFlowService):
+        super().__init__()
+        self.bot = bot
+        self.flow = flow
+        self.players = discord.ui.TextInput(
+            label="Fill-ins first (optional, comma-separated)",
+            placeholder="Names, IDs or mentions. Empty = auto-fill from Open standings.",
+            required=False,
+            max_length=1000,
+            style=discord.TextStyle.paragraph,
+        )
+        self.add_item(self.players)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        season = await SeasonService().get_current_season_number()
+        if not season:
+            await interaction.followup.send("No active season.", ephemeral=True)
+            return
+        picks = [p.strip() for p in (self.players.value or "").split(",") if p.strip()]
+        preview = await self.flow.preview_swiss(season, picks)
+        if preview.get("error"):
+            await interaction.followup.send(preview["error"], ephemeral=True)
+            return
+        view = SwissPreviewView(
+            self.bot, self.flow, interaction.user.id,
+            preview["fill_ids"], can_confirm=preview["short"] == 0,
+        )
+        await interaction.followup.send(
+            embed=swiss_preview_embed(preview), view=view, ephemeral=True
+        )
+
+
 # Buttons that only make sense in some stages. Anything not listed is always on.
 BUTTON_STATES = {
     "gen_open": ("SIGNUP", "OPEN"),
     "start_playins": ("OPEN", "PLAYIN"),
+    "redraw_playins": ("OPEN", "PLAYIN"),
     "gen_swiss": ("PLAYIN", "SWISS"),
+    "swiss_preview": ("OPEN", "PLAYIN"),
     "seed_playoff": ("SWISS", "PLAYOFF"),
     "sync_open": ("OPEN", "PLAYIN"),
     "skip_open": ("SIGNUP",),
@@ -168,9 +342,10 @@ class DashboardView(ReportingView):
         cog = self.bot.get_cog("TournamentCog")
         if cog:
             result = await cog._run_stage(interaction.guild, action, season_num)
+            await cog.send_stage_result(interaction, result)
         else:
             result = await action(season_num)
-        await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
+            await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
 
     # Row 0: Stage generation
     @discord.ui.button(label="Open", style=discord.ButtonStyle.primary, emoji="🎲", row=0)
@@ -180,6 +355,10 @@ class DashboardView(ReportingView):
     @discord.ui.button(label="Start Playins", style=discord.ButtonStyle.primary, emoji="⚔️", row=0)
     async def start_playins(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._run_stage(interaction, self.flow_service.start_playins)
+
+    @discord.ui.button(label="Redraw Playins", style=discord.ButtonStyle.secondary, emoji="🔁", row=0)
+    async def redraw_playins(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(RedrawPlayinsModal(self.bot, self.flow_service))
 
     @discord.ui.button(label="Start Swiss", style=discord.ButtonStyle.primary, emoji="🇨🇭", row=0)
     async def gen_swiss(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -219,6 +398,10 @@ class DashboardView(ReportingView):
     @discord.ui.button(label="Finish Playins", style=discord.ButtonStyle.secondary, emoji="✅", row=1)
     async def finish_playins(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._run_stage(interaction, self.flow_service.finish_playins)
+
+    @discord.ui.button(label="Swiss Preview", style=discord.ButtonStyle.secondary, emoji="👀", row=1)
+    async def swiss_preview(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SwissFillModal(self.bot, self.flow_service))
 
     async def _thread_context(self, interaction: discord.Interaction):
         """(channel, season, state) for thread buttons, or None after replying."""
@@ -370,8 +553,9 @@ class DashboardCog(commands.Cog):
                 embed.add_field(
                     name="Buttons",
                     value=(
-                        "**Stage:** Open · Start Playins · Start Swiss · Playoffs\n"
-                        "**Repair:** Next Step · Sync Open · Skip Open · Finish Playins\n"
+                        "**Stage:** Open · Start Playins · Redraw Playins · Start Swiss · Playoffs\n"
+                        "**Repair:** Next Step · Sync Open · Skip Open · Finish Playins · "
+                        "Swiss Preview (skip Playins / fill a short Swiss field)\n"
                         "**Threads:** Threads · Clean Threads (asks first)\n"
                         "**Config** and **Boards** below. Buttons for other stages are disabled."
                     ),

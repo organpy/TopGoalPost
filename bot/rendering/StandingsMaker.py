@@ -741,8 +741,12 @@ def _playin_label_x(left: float, box_w: float, side: int, has_player: bool) -> f
 
 
 async def get_playin(season: int | None = None):
+    from bot.services.playin import get_redraw
+
     async with get_db_manager().get_session() as session:
         season = await _get_season(session, season)
+    redraw = await get_redraw(season)
+    async with get_db_manager().get_session() as session:
         filename = asset_path("tables", f"playin_s{season}.png")
         playin_event = await _get_event(session, EventType.PLAYIN, season)
 
@@ -771,7 +775,13 @@ async def get_playin(season: int | None = None):
 
         rounds = [1, 2, 3]
         cut_preview = 0
-        if not round_matches.get(4):
+        round_labels_extra: dict[int, str] = {}
+        if redraw is not None:
+            # A redraw has as many rounds as its biggest path, no cut round.
+            total = max(1, redraw.get("rounds") or max(round_matches, default=1))
+            rounds = list(range(1, total + 1))
+            round_labels_extra = {total: "FINAL - TO SWISS"} if total > 1 else {}
+        elif not round_matches.get(4):
             from bot.services.playin import compute_playin_math
 
             all_ps = (
@@ -784,11 +794,9 @@ async def get_playin(season: int | None = None):
             cut_preview = compute_playin_math(all_ps)["cut_matches"]
             if cut_preview:
                 round_matches[4] = _pad_matches([], cut_preview, "PL")
-        if round_matches.get(4):
+        if redraw is None and round_matches.get(4):
             rounds.append(4)
             round_labels_extra = {4: "CUT"}
-        else:
-            round_labels_extra = {}
         if not round_matches.get(1):
             round_matches[1] = _pad_matches([], 1, "PL")
 
@@ -804,6 +812,7 @@ async def get_playin(season: int | None = None):
                 repr(_match_signature(matches))
                 + repr(rounds)
                 + repr(cut_preview)
+                + repr(round_labels_extra)
                 + repr(season)
                 + layout_name,
                 "utf-8",

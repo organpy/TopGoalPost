@@ -180,7 +180,7 @@ class TournamentCog(commands.Cog):
             await interaction.followup.send("No active season.", ephemeral=True)
             return
         result = await self._run_stage(interaction.guild, action, season, *args)
-        await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
+        await self.send_stage_result(interaction, result)
 
     async def _open_impl(self, ctx):
         await self._stage_prefix(ctx, self.flow_service.start_open)
@@ -315,7 +315,18 @@ class TournamentCog(commands.Cog):
                     inline=False,
                 )
         layout = info.get("playin_layout", {})
-        if layout:
+        redraw = info.get("playin_redraw")
+        if redraw:
+            embed.add_field(
+                name="Playin plan (redraw)",
+                value=(
+                    f"{len(redraw.get('direct', []))} direct ({redraw.get('min_wins')}+ wins) · "
+                    f"{redraw.get('slots')} place(s) from {len(redraw.get('contestants', []))} "
+                    f"contestants · {redraw.get('rounds')} round(s)"
+                ),
+                inline=False,
+            )
+        elif layout:
             exp = layout.get("expected_matches", {})
             value = (
                 f"Qualifiers {layout.get('qualifiers')} · "
@@ -355,6 +366,18 @@ class TournamentCog(commands.Cog):
     @require_host_app()
     async def slash_start_playins(self, interaction: discord.Interaction):
         await self._stage_slash(interaction, self.flow_service.start_playins)
+
+    async def send_stage_result(self, interaction: discord.Interaction, result: dict) -> None:
+        """Reply with a stage result; a short Playin field asks how to proceed."""
+        if result.get("short"):
+            from bot.ui.stage_choice import playins_choice
+
+            content, embed, view = playins_choice(
+                self.bot, interaction.user.id, self.flow_service, result
+            )
+            await interaction.followup.send(content, embed=embed, view=view, ephemeral=True)
+            return
+        await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
 
     @tourney.command(
         name="playin_round",
@@ -486,6 +509,44 @@ class TournamentCog(commands.Cog):
         round_num: app_commands.Range[int, 1, 5] = None,
     ):
         await self._stage_slash(interaction, self.flow_service.start_swiss, round_num)
+
+    @tourney.command(
+        name="redraw_playins",
+        description="Send 2+ win players straight to Swiss and redraw Playins for the rest",
+    )
+    @app_commands.describe(
+        direct_min_wins="Open wins that go straight to Swiss (default 2)",
+        pull_back="Direct players to put back into Playins (names/IDs, comma-separated)",
+        pull_back_worst="Put back this many of the worst direct players",
+    )
+    @require_host_app()
+    async def slash_redraw_playins(
+        self,
+        interaction: discord.Interaction,
+        direct_min_wins: app_commands.Range[int, 2, 4] = 2,
+        pull_back: Optional[str] = None,
+        pull_back_worst: app_commands.Range[int, 0, 16] = 0,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        season = await self.season_service.get_current_season_number()
+        if not season:
+            await interaction.followup.send("No active season.", ephemeral=True)
+            return
+        picks = [p.strip() for p in (pull_back or "").split(",") if p.strip()]
+        preview = await self.flow_service.preview_playin_redraw(
+            season, direct_min_wins, picks, pull_back_worst
+        )
+        if preview.get("error"):
+            await interaction.followup.send(preview["error"], ephemeral=True)
+            return
+        if not await confirm(interaction, f"**Playin redraw**\n{preview['message']}\n\nCreate it?"):
+            await interaction.followup.send("Cancelled; nothing changed.", ephemeral=True)
+            return
+        result = await self._run_stage(
+            interaction.guild, self.flow_service.redraw_playins, season,
+            direct_min_wins, picks, pull_back_worst, preview["signature"],
+        )
+        await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
 
     @tourney.command(name="generate_playoffs", description="Seed / regenerate playoff bracket from Swiss results")
     @require_host_app()
