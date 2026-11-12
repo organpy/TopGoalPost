@@ -263,6 +263,37 @@ says R3 will overproduce, `/playins` previews the empty CUT column and
 If every entrant already has four wins, no ladder cards are created; those
 players auto-qualify and the next step becomes Swiss.
 `/tourney finish_playins` remains available as a manual retry.
+Withdrawn (forfeited) players are left out of the ladder math.
+
+**Short field → single-elim redraw.** Before creating the ladder,
+`/tourney start_playins` checks whether it can actually reach 32. If not, it
+creates nothing and shows the numbers (projected field, players per win group,
+withdrawn) plus a preview of a single-elimination redraw, with three buttons:
+**Regular anyway** (build the survival ladder; fill the gap later with
+**Swiss Preview**), **Single-elim redraw**, or **Cancel**.
+
+The redraw can also be run on its own, even after a regular ladder was
+played (it deletes that ladder; the preview says how many matches):
+
+```
+/tourney redraw_playins [direct_min_wins:2] [pull_back:"A, B"] [pull_back_worst:N]
+```
+
+- Seeds and every player with `direct_min_wins`+ Open wins (default 2) go
+  straight to Swiss.
+- The remaining 1-win players (withdrawn excluded) play a knockout for the
+  places left: one small bracket per place, at most 3 rounds, all finals in the
+  last round. Byes go to the best players, so the worst play each other first
+  and the winner meets the best.
+- If 3 rounds are not enough, the command asks you to pull direct players back
+  into the knockout: the worst ones (`pull_back_worst`) or named ones
+  (`pull_back`). Pulled-back players are the top seeds of the knockout.
+- `/playins` shows only the rounds the redraw needs; the last column is
+  *FINAL - TO SWISS*. Scoring the finals finishes Playins automatically.
+
+Example: 4 seeds + 26 players with 2+ wins = 30, 11 one-win players of whom
+2 forfeited → 9 players for 2 places: one Round 1 match (#8 vs #9), Round 2
+(#1 vs that winner, plus three more), then two finals.
 
 **Glossary.** *HP* (life points) starts at 4 in Open and drops by 1 per loss.
 *CUT* is the extra Playin round created only when R3 produces more qualifiers
@@ -275,7 +306,12 @@ than the 32-player Swiss field can take.
 
 Swiss is a fixed 32-player survival ladder. Returning seeds plus Playin
 qualifiers must add up to exactly 32. Three wins qualify; three losses
-eliminate.
+eliminate. Withdrawn players never enter Swiss.
+
+If the field is short (or you want to skip Playins from OPEN), the dashboard
+**Swiss Preview** button shows the 32 in seed order — seeds, Playin
+qualifiers, then players you name, then the best remaining Open finishers —
+and creates Swiss only when you click **Create**.
 
 | Round | Groups | Matches |
 |---|---|---:|
@@ -367,6 +403,7 @@ the reset card if one is played.
 | `/tourney start_playins` | Create the complete preseeded Playin ladder |
 | `/tourney playin_round round_num:N` | Re-run a specific Playin round |
 | `/tourney finish_playins` | Manually retry Playin finalization |
+| `/tourney redraw_playins [direct_min_wins] [pull_back] [pull_back_worst]` | Send 2+ win players to Swiss and run a single-elim knockout for the remaining places (preview + confirm) |
 | `/tourney swiss_round round_num:N` | Create the Swiss ladder / show a round |
 | `/tourney generate_playoffs` | Seed playoff bracket from Swiss results |
 
@@ -411,6 +448,7 @@ database. Every subcommand is host-only and replies ephemerally.
 | `/player delete_matches target:@P` | Delete a player's uncompleted Open/Playin matches |
 | `/player forfeit_all target:@P` | Withdraw the player: forfeit every uncompleted match and auto-forfeit any match they are placed in later (no free advancement or loser-bracket drop) |
 | `/player forfeit_many targets:"@A @B"` | Same as `forfeit_all` for several players (mentions or IDs); all are flagged before any forfeit runs |
+| `/player unwithdraw target:@P` | Clear the withdrawn/forfeited flag so the player can be placed in matches again; matches already forfeited keep their result |
 | `/player win_all target:@P` | Give the player a 1-0 win in every ready match (opponents forfeit), advancing until the next opponent is unknown |
 | `/player lose_all target:@P` | Record a 0-1 loss in every ready match as normal score reports; does **not** withdraw the player |
 | `/player substitute old:@P new:@P [country]` | Replace a player in all uncompleted matches; a missing replacement country is inherited from the old player |
@@ -624,6 +662,9 @@ still show faces.
 `/dashboard` opens an interactive admin panel with buttons for each stage
 action. The **Next Step** button follows the season state machine and the
 **Skip Open** button edits the returning-seed list before Open generation.
+**Redraw Playins** opens the single-elim redraw (with preview), and **Swiss
+Preview** shows/fills the 32-player Swiss field before creating it (and skips
+Playins when used from OPEN).
 
 ---
 
