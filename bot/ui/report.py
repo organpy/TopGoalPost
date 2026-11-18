@@ -264,7 +264,10 @@ async def apply_report_action(
     if reason:
         content += f"\n{quote(reason)}"
 
-    if report is not None:
+    if report is not None and action != "confirm":
+        # The ping below carries the outcome; drop the old message so only one remains.
+        await _delete_report_message(interaction.client, report)
+    elif report is not None:
         await publish_outcome(
             interaction.client,
             report,
@@ -366,6 +369,17 @@ async def publish_outcome(
         await message.edit(content=content, embed=embed, view=None)
     except discord.HTTPException:
         logger.warning("Could not update report #%s message", report.id, exc_info=True)
+
+
+async def _delete_report_message(client: discord.Client, report) -> None:
+    channel = await _report_channel(client, report)
+    if channel is None or not report.message_id:
+        return
+    try:
+        message = await channel.fetch_message(report.message_id)
+        await message.delete()
+    except discord.HTTPException:
+        logger.warning("Could not delete report #%s message", report.id, exc_info=True)
 
 
 async def _notify(

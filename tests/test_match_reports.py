@@ -277,5 +277,34 @@ class TestModQueue:
         await apply_report_action(interaction, "reject", report.id, "wrong score")
 
         assert (await svc.get(report.id)).reason == "wrong score"
-        assert "Could not update report" in caplog.text
+        assert "Could not delete report" in caplog.text
         assert "Could not notify players" in caplog.text
+
+
+async def test_reject_replaces_report_message_with_single_ping(db):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from bot.services.match_report import MatchReportService
+    from bot.ui.report import apply_report_action
+
+    match_id = await _scheduled_match(db)
+    svc = MatchReportService()
+    report = (await svc.create_report(match_id, 111, 3, 1, 0))["report"]
+    await svc.set_message(report.id, channel_id=10, message_id=20)
+
+    old_message = MagicMock()
+    old_message.delete = AsyncMock()
+    old_message.edit = AsyncMock()
+    channel = MagicMock()
+    channel.fetch_message = AsyncMock(return_value=old_message)
+    channel.send = AsyncMock()
+    interaction = MagicMock()
+    interaction.user.id = 222
+    interaction.client.get_channel = MagicMock(return_value=channel)
+    interaction.followup.send = AsyncMock()
+
+    await apply_report_action(interaction, "reject", report.id, "wrong score")
+
+    old_message.delete.assert_awaited_once()
+    old_message.edit.assert_not_awaited()
+    channel.send.assert_awaited_once()
