@@ -1,6 +1,7 @@
 """Unit tests for bot services."""
 
 from collections import Counter
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -740,6 +741,78 @@ class TestMatchService:
             ps = await PlayerSeasonRepository(session).get(newcomer.id, 1)
             assert ps is not None
             assert ps.open_wins == 1
+
+    async def test_substitute_stage_only_skips_other_stages(
+        self, db, seed_data
+    ):
+        from bot.services.match import MatchService
+
+        players = seed_data["players"]
+        async with db.get_session() as session:
+            open_ev = await EventRepository(session).create(
+                "open", EventType.OPEN, 1
+            )
+            swiss_ev = await EventRepository(session).create(
+                "swiss", EventType.SWISS, 1
+            )
+            mp_repo = MatchPlayerRepository(session)
+            ids = {}
+            for name, ev in (("open", open_ev), ("swiss", swiss_ev)):
+                m = await MatchRepository(session).create(ev.id)
+                await mp_repo.create(m.id, side=0, player_id=players[0].id)
+                await mp_repo.create(m.id, side=1, player_id=players[1].id)
+                ids[name] = m.id
+            await session.commit()
+
+        await MatchService().substitute_player(
+            players[0].id, players[2].id, 1, stage=EventType.SWISS
+        )
+
+        async with db.get_session() as session:
+            mp_repo = MatchPlayerRepository(session)
+            swiss = await mp_repo.get_by_match(ids["swiss"])
+            opn = await mp_repo.get_by_match(ids["open"])
+            assert players[2].id in {mp.player_id for mp in swiss}
+            assert players[0].id in {mp.player_id for mp in opn}
+            ps_repo = PlayerSeasonRepository(session)
+            # Replacement already had stats: both rows stay.
+            assert await ps_repo.get(players[0].id, 1) is not None
+            assert await ps_repo.get(players[2].id, 1) is not None
+
+    async def test_trim_open_matches_keeps_first_n(self, db, seed_data):
+        from bot.services.match import MatchService
+
+        players = seed_data["players"]
+        async with db.get_session() as session:
+            ev = await EventRepository(session).create(
+                "open", EventType.OPEN, 1
+            )
+            mp_repo = MatchPlayerRepository(session)
+            match_ids = []
+            for i in range(6):
+                m = await MatchRepository(session).create(ev.id)
+                m.completed_at = datetime.utcnow()
+                await mp_repo.create(
+                    m.id, side=0, player_id=players[0].id, goals=1
+                )
+                await mp_repo.create(
+                    m.id, side=1, player_id=players[1 + i].id
+                )
+                match_ids.append(m.id)
+            await session.commit()
+
+        msg = await MatchService().trim_open_matches(players[0].id, 1, keep=4)
+        assert "detached them from 2" in msg
+
+        async with db.get_session() as session:
+            mp_repo = MatchPlayerRepository(session)
+            for i, mid in enumerate(match_ids):
+                sides = {
+                    mp.side: mp.player_id
+                    for mp in await mp_repo.get_by_match(mid)
+                }
+                assert sides[0] == (players[0].id if i < 4 else None)
+                assert sides[1] == players[1 + i].id
 
     async def test_reset_open_matches_clears_scores_and_stats(
         self, db, seed_data

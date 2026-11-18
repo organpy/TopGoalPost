@@ -12,7 +12,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from bot.cogs.checks import require_host_app
+from bot.cogs.checks import require_host, require_host_app
 from bot.cogs.scheduling.schedule_cog import (
     _format_minutes,
     day_autocomplete,
@@ -26,6 +26,7 @@ from bot.rendering import ASSETS_ROOT
 from bot.services import audit
 from bot.ui.autocomplete import season_autocomplete, username_autocomplete
 from bot.db import (
+    EventType,
     get_db_manager,
     PlayerRepository,
     PlayerSeasonRepository,
@@ -940,6 +941,10 @@ class PlayerCog(commands.Cog):
             "Country for the replacement (name or 2-letter code; "
             "fills a missing country from the old player)"
         ),
+        stage_only=(
+            "Only move matches of the current stage; keep the replacement's "
+            "own season stats if they already have some"
+        ),
     )
     @app_commands.autocomplete(
         old=username_autocomplete,
@@ -953,11 +958,23 @@ class PlayerCog(commands.Cog):
         old: str,
         new: str,
         country: Optional[str] = None,
+        stage_only: bool = False,
     ):
         await interaction.response.defer(ephemeral=True)
         season_num = await self._season_or_reply(interaction)
         if not season_num:
             return
+
+        stage = None
+        if stage_only:
+            state = (await self.season_service.get_state()).lower()
+            if state not in {t.value for t in EventType}:
+                await interaction.followup.send(
+                    f"`stage_only` needs a running stage (state is {state}).",
+                    ephemeral=True,
+                )
+                return
+            stage = EventType(state)
 
         country_code = None
         if country is not None:
@@ -993,8 +1010,15 @@ class PlayerCog(commands.Cog):
         answer = await confirm(
             interaction,
             f"Replace **{old_player.name}** with {new_label} in season "
-            f"{season_num}? Unplayed matches and completed Open results move "
-            "to the replacement.",
+            f"{season_num}? "
+            + (
+                f"Only unplayed {stage.value.title()} matches"
+                + (" and completed Open results" if stage == EventType.OPEN else "")
+                + " move to the replacement."
+                if stage
+                else "Unplayed matches and completed Open results move "
+                "to the replacement."
+            ),
         )
         if not answer:
             await interaction.followup.send("Cancelled.", ephemeral=True)
@@ -1013,7 +1037,7 @@ class PlayerCog(commands.Cog):
             new_player.country = country_code
 
         msg = await self.match_service.substitute_player(
-            old_player.id, new_player.id, season_num
+            old_player.id, new_player.id, season_num, stage=stage
         )
         if interaction.guild:
             await replace_player_in_threads(
@@ -1024,6 +1048,34 @@ class PlayerCog(commands.Cog):
                 new_player.name,
             )
         await interaction.followup.send(msg, ephemeral=True)
+
+    @commands.command(
+        name="fix_open_games",
+        help="Keep a player's first N Open matches (default 4) and detach "
+        "them from the rest, e.g. after a substitution doubled their games",
+    )
+    @require_host()
+    async def fix_open_games_cmd(
+        self, ctx: commands.Context, player: str, keep: int = 4
+    ):
+        season_num = await self.season_service.get_current_season_number()
+        if not season_num:
+            await ctx.send("No active season.")
+            return
+        if keep < 0:
+            await ctx.send("`keep` must be 0 or more.")
+            return
+        target = await self._resolve_player_token(player, season_num)
+        if not target:
+            await ctx.send(f"No player found matching **{player}**.")
+            return
+        msg = await self.match_service.trim_open_matches(
+            target.id, season_num, keep=keep
+        )
+        await audit.record(
+            "player.trim_open", "player", target.id, keep=keep, season=season_num
+        )
+        await ctx.send(msg)
 
     @player.command(
         name="reset_matches",

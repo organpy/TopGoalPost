@@ -770,7 +770,11 @@ class MatchService:
             await session.commit()
 
     async def substitute_player(
-        self, old_player_id: int, new_player_id: int, season: int
+        self,
+        old_player_id: int,
+        new_player_id: int,
+        season: int,
+        stage: Optional[EventType] = None,
     ) -> str:
         """Move a player's current-season slot to another player.
 
@@ -783,6 +787,10 @@ class MatchService:
         The original ``PlayerSeason`` row is transferred (or merged) to the new
         player so seeds, HP and Open records follow the slot. If the replacement
         has no country, it inherits the replaced player's country.
+
+        With ``stage`` set, only matches of that stage move, and season stats
+        transfer only when the replacement has none yet (so a player already
+        in the tournament keeps their own record).
         """
         from bot.db import PlayerRepository, PlayerSeasonRepository
 
@@ -811,6 +819,17 @@ class MatchService:
             unplayed = await mp_repo.get_unplayed_player_matches(
                 old_player.id, season=season
             )
+            if stage is not None:
+                stage_ids = set(
+                    (
+                        await session.execute(
+                            select(Match.id)
+                            .join(Event, Event.id == Match.event_id)
+                            .where(Event.type == stage, Event.season == season)
+                        )
+                    ).scalars().all()
+                )
+                unplayed = [mp for mp in unplayed if mp.match_id in stage_ids]
             for mp in unplayed:
                 mp.player_id = new_player.id
                 session.add(mp)
@@ -832,6 +851,8 @@ class MatchService:
                     )
                 )
             ).scalars().all()
+            if stage not in (None, EventType.OPEN):
+                completed_open = []
             for mp in completed_open:
                 mp.player_id = new_player.id
                 session.add(mp)
@@ -846,7 +867,7 @@ class MatchService:
             )
 
             transferred = False
-            if old_ps:
+            if old_ps and (stage is None or new_ps is None):
                 if new_ps is None:
                     new_ps = PlayerSeason(
                         player_id=new_player.id, season_number=season
@@ -883,6 +904,53 @@ class MatchService:
             f"Substituted **{old_player.name}** → **{new_player.name}** "
             f"in {len(moved_match_ids)} match(es)."
             f"{' Season stats transferred.' if transferred else ''}"
+        )
+
+    async def trim_open_matches(
+        self, player_id: int, season: int, keep: int = 4
+    ) -> str:
+        """Keep a player's first ``keep`` Open matches and detach the rest.
+
+        Repairs a substitution that gave an existing player a second set of
+        Open matches. Opponents keep their results in the detached matches;
+        Open stats are rebuilt afterwards.
+        """
+        async with self.db.get_session() as session:
+            player = await session.get(Player, player_id)
+            if not player:
+                return f"No player found with internal ID {player_id}."
+
+            mps = (
+                await session.execute(
+                    select(MatchPlayer)
+                    .join(Match, Match.id == MatchPlayer.match_id)
+                    .join(Event, Event.id == Match.event_id)
+                    .where(
+                        MatchPlayer.player_id == player_id,
+                        Event.type == EventType.OPEN,
+                        Event.season == season,
+                    )
+                    .order_by(Match.id)
+                )
+            ).scalars().all()
+            match_ids = list(dict.fromkeys(mp.match_id for mp in mps))
+            extra = set(match_ids[keep:])
+            for mp in mps:
+                if mp.match_id in extra:
+                    mp.player_id = None
+                    session.add(mp)
+            await session.commit()
+
+        if not extra:
+            return (
+                f"**{player.name}** has {len(match_ids)} Open match(es); "
+                "nothing to trim."
+            )
+        await self.sync_open_stats(season)
+        return (
+            f"Kept {keep} Open match(es) for **{player.name}** and detached "
+            f"them from {len(extra)} (match IDs: "
+            f"{', '.join(str(i) for i in sorted(extra))})."
         )
 
     async def reset_open_matches(self, player_id: int, season: int) -> str:

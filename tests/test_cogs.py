@@ -1521,7 +1521,7 @@ class TestPlayerAdmin:
         cog.match_service.forfeit_all_player_matches.assert_awaited_once_with(
             42, season=1
         )
-        cog.match_service.substitute_player.assert_awaited_once_with(1, 2, 1)
+        cog.match_service.substitute_player.assert_awaited_once_with(1, 2, 1, stage=None)
         replace_player.assert_awaited_once_with(
             mock_interaction.guild, 42, "Old", 7, "New"
         )
@@ -1552,7 +1552,7 @@ class TestPlayerAdmin:
         cog._create_substitute_player.assert_awaited_once_with(
             "Ghost", None, None
         )
-        cog.match_service.substitute_player.assert_awaited_once_with(1, 9, 1)
+        cog.match_service.substitute_player.assert_awaited_once_with(1, 9, 1, stage=None)
 
     async def test_substitute_applies_explicit_country(
         self, mock_interaction, mock_bot
@@ -1580,7 +1580,7 @@ class TestPlayerAdmin:
         cog._create_substitute_player.assert_awaited_once_with(
             "Ghost", None, "de"
         )
-        cog.match_service.substitute_player.assert_awaited_once_with(1, 9, 1)
+        cog.match_service.substitute_player.assert_awaited_once_with(1, 9, 1, stage=None)
 
     async def test_substitute_updates_existing_player_country(
         self, mock_interaction, mock_bot
@@ -1616,7 +1616,7 @@ class TestPlayerAdmin:
             stored = await PlayerRepository(session).get_by_id(new_id)
             assert stored.country == "de"
         cog.match_service.substitute_player.assert_awaited_once_with(
-            old_id, new_id, 1
+            old_id, new_id, 1, stage=None
         )
 
     async def test_create_substitute_player_saves_country(self, mock_bot):
