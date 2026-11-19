@@ -2753,10 +2753,14 @@ def test_open_ring_gives_two_left_and_two_right():
     assert open_ring_pairs([1, 2, 3]) == [(1, 2), (1, 3), (2, 3)]
 
 
-async def test_generate_open_uses_signup_order_ring(db, seed_data):
+async def test_generate_open_shuffles_ring(db, seed_data, monkeypatch):
+    from collections import Counter
+
+    from bot.services import pairing
     from bot.services.pairing import PairingService
 
     ids = [p.id for p in seed_data["players"]]
+    monkeypatch.setattr(pairing.random, "shuffle", lambda ring: ring.reverse())
     created, players, err = await PairingService().generate_open(1)
     assert (created, players, err) == (16, 8, None)
 
@@ -2764,8 +2768,41 @@ async def test_generate_open_uses_signup_order_ring(db, seed_data):
         event = await EventRepository(session).get_by_type_and_season(EventType.OPEN, 1)
         matches = await MatchRepository(session).get_by_event(event.id)
     pairs = [tuple(mp.player_id for mp in sorted(m.match_players, key=lambda mp: mp.side)) for m in matches]
-    assert pairs[:4] == [(ids[0], ids[1]), (ids[0], ids[2]), (ids[1], ids[2]), (ids[1], ids[3])]
-    assert pairs[-2:] == [(ids[7], ids[0]), (ids[7], ids[1])]
+    assert pairs[:2] == [(ids[7], ids[6]), (ids[7], ids[5])]
+    assert Counter(l for l, _ in pairs) == Counter(r for _, r in pairs) == Counter({i: 2 for i in ids})
+
+
+def test_balance_side_flips_evens_out_and_respects_locks():
+    from bot.services.pairing import balance_side_flips, open_ring_pairs
+
+    # Everyone on the left side of their ring games: 1 is 4/0, 5 is 0/4, etc.
+    games = {i: (min(a, b), max(a, b)) for i, (a, b) in enumerate(open_ring_pairs(list(range(1, 9))))}
+    flips, excess = balance_side_flips(games)
+    assert not any(excess.values())
+
+    locked = set(games)
+    flips, excess = balance_side_flips(games, locked)
+    assert not flips and excess[1] == 4
+
+
+async def test_balance_open_sides_command_path(db, seed_data):
+    from datetime import datetime
+
+    from bot.services.pairing import PairingService
+
+    svc = PairingService()
+    await svc.generate_open(1)
+    async with db.get_session() as session:
+        event = await EventRepository(session).get_by_type_and_season(EventType.OPEN, 1)
+        matches = await MatchRepository(session).get_by_event(event.id)
+        for m in matches[:3]:  # unbalance three games
+            a, b = m.match_players
+            a.player_id, b.player_id = b.player_id, a.player_id
+        matches[3].completed_at = datetime.utcnow()
+        await session.commit()
+
+    result = await svc.balance_open_sides(1)
+    assert result["ok"] and result["flipped"] >= 3 and result["unbalanced"] == []
 
 
 async def test_regenerate_open_replaces_played_matches_and_resets_hp(db, seed_data, open_event):
@@ -2826,7 +2863,9 @@ async def test_swap_open_players_trades_opponents(db, seed_data):
         return out
 
     before = await opponents()
-    a, b = p[0].discord_id, p[4].discord_id  # not neighbours in an 8-ring
+    by_id = {pl.discord_id: pl for pl in p}
+    a = p[0].discord_id
+    b = next(d for d in by_id if d != a and d not in before[a])  # the ring is random now
     result = await svc.swap_open_players(1, a, b)
     assert result["ok"] and result["matches"] == 8
 
@@ -2835,7 +2874,10 @@ async def test_swap_open_players_trades_opponents(db, seed_data):
 
     async with db.get_session() as session:
         event = await EventRepository(session).get_by_type_and_season(EventType.OPEN, 1)
-        match = (await MatchRepository(session).get_by_event(event.id))[0]
+        match = next(
+            m for m in await MatchRepository(session).get_by_event(event.id)
+            if any(mp.player_id == by_id[a].id for mp in m.match_players)
+        )
         match.completed_at = datetime.utcnow()
         await session.commit()
     assert "already has a played" in (await svc.swap_open_players(1, a, b))["error"]

@@ -470,6 +470,28 @@ class TournamentCog(commands.Cog):
         result = await self._run_stage(interaction.guild, self.flow_service.start_open, season, True)
         await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
 
+    @tourney_group.command(
+        name="balance_sides", help="Flip unplayed Open matches so everyone has 2 left / 2 right games"
+    )
+    @require_host()
+    async def balance_sides_cmd(self, ctx: commands.Context):
+        season = await self.season_service.get_current_season_number()
+        if not season:
+            await ctx.send("No active season.")
+            return
+        result = await self.pairing_service.balance_open_sides(season)
+        if "error" in result:
+            await ctx.send(result["error"])
+            return
+        await audit.record("open.balance_sides", "season", season, flipped=result["flipped"])
+        lines = [f"Flipped sides on {result['flipped']} Open match(es)."]
+        if result["unbalanced"]:
+            lines.append("Still uneven (played or reported matches are locked):")
+            lines += [f"- {name}: {left} left / {right} right" for name, left, right in result["unbalanced"]]
+        else:
+            lines.append("Every player now has as many left as right games.")
+        await ctx.send("\n".join(lines))
+
     @tourney.command(name="swap_players", description="Swap two players' Open matchups")
     @app_commands.describe(
         player1="Takes over player2's Open opponents",

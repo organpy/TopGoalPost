@@ -1,6 +1,7 @@
 """Pairing service for all tournament stages."""
 
 import random
+from collections import Counter, defaultdict, deque
 from typing import Optional
 
 from sqlalchemy import select, and_, literal_column
@@ -239,6 +240,48 @@ def open_ring_pairs(ring: list[int]) -> list[tuple[int, int]]:
         return [(ring[i], ring[j]) for i in range(n) for j in range(i + 1, n)]
     return [(ring[i], ring[(i + step) % n]) for i in range(n) for step in (1, 2)]
 
+
+def balance_side_flips(
+    games: dict[int, tuple[int, int]], locked: set[int] = frozenset()
+) -> tuple[set[int], Counter]:
+    """Pick matches to flip so each player has as many left as right games.
+
+    ``games`` maps match id -> (left player, right player). Locked matches
+    never flip. Repeatedly reverses a path of free matches from a left-heavy
+    player to a right-heavy one; players in the middle keep their balance.
+    Returns (match ids to flip, left-minus-right per player after flipping).
+    """
+    games = dict(games)
+    flips: set[int] = set()
+    while True:
+        excess: Counter = Counter()
+        out: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for mid, (left, right) in games.items():
+            excess[left] += 1
+            excess[right] -= 1
+            if mid not in locked:
+                out[left].append((mid, right))
+        starts = [p for p, e in excess.items() if e > 1]
+        prev: dict[int, Optional[tuple[int, int]]] = {p: None for p in starts}
+        queue, end = deque(starts), None
+        while queue:
+            u = queue.popleft()
+            if excess[u] < -1:
+                end = u
+                break
+            for mid, v in out[u]:
+                if v not in prev:
+                    prev[v] = (u, mid)
+                    queue.append(v)
+        if end is None:
+            return flips, excess
+        v = end
+        while prev[v]:
+            u, mid = prev[v]
+            games[mid] = (v, u)
+            flips ^= {mid}
+            v = u
+
 class PairingService:
     def __init__(self):
         self.db = get_db_manager()
@@ -389,6 +432,49 @@ class PairingService:
                 "names": (players[discord_a].name, players[discord_b].name),
             }
 
+    async def balance_open_sides(self, season: int) -> dict:
+        """Flip sides of unplayed Open matches so everyone has 2 left / 2 right.
+
+        Played matches and ones with an open score report keep their sides.
+        Returns {"ok", "flipped", "unbalanced": [(name, left, right)]} or {"error"}.
+        """
+        async with self.db.get_session() as session:
+            event = await EventRepository(session).get_by_type_and_season(EventType.OPEN, season)
+            if not event:
+                return {"error": "No Open matches this season."}
+            games, rows, locked = {}, {}, set()
+            for m in await MatchRepository(session).get_by_event(event.id):
+                mps = sorted(m.match_players, key=lambda mp: mp.side)
+                if len(mps) != 2 or None in (mps[0].player_id, mps[1].player_id):
+                    continue
+                games[m.id] = (mps[0].player_id, mps[1].player_id)
+                rows[m.id] = mps
+                if m.completed_at:
+                    locked.add(m.id)
+            if games:
+                locked |= set((await session.execute(
+                    select(MatchReport.match_id).where(and_(
+                        MatchReport.match_id.in_(list(games)),
+                        MatchReport.status.in_(OPEN_REPORT_STATUSES),
+                    ))
+                )).scalars())
+
+            flips, excess = balance_side_flips(games, locked)
+            for mid in flips:
+                left, right = rows[mid]
+                left.player_id, right.player_id = right.player_id, left.player_id
+            await session.commit()
+
+            totals = Counter(p for pair in games.values() for p in pair)
+            repo = PlayerRepository(session)
+            unbalanced = []
+            for pid, e in excess.items():
+                if e:
+                    player = await repo.get_by_id(pid)
+                    n = totals[pid]
+                    unbalanced.append((player.name if player else str(pid), (n + e) // 2, (n - e) // 2))
+            return {"ok": True, "flipped": len(flips), "unbalanced": unbalanced}
+
     async def delete_open(self, season: int) -> int:
         """Delete every Open match of ``season``. Returns how many were deleted."""
         async with self.db.get_session() as session:
@@ -404,7 +490,7 @@ class PairingService:
     async def generate_open(self, season: int) -> tuple[int, int, Optional[str]]:
         """Generate all Open stage matches at once.
 
-        Players sit in a ring in signup order; each plays the two players on
+        Players sit in a ring in random order; each plays the two players on
         their left and the two on their right, so everyone gets exactly 4
         matches (2 on each side). Fields under 5 play a round robin instead.
 
@@ -432,6 +518,7 @@ class PairingService:
             ]
             if len(ring) < 2:
                 return 0, 0, "Not enough active players in open stage."
+            random.shuffle(ring)
 
             for p1, p2 in open_ring_pairs(ring):
                 match = Match(event_id=eid)
