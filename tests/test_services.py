@@ -5,6 +5,8 @@ from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from bot.db import (
     MatchRepository, MatchPlayerRepository, PlayerRepository,
@@ -2164,6 +2166,40 @@ class TestPlayoffGate:
             swiss = await EventRepository(session).get_by_type_and_season(EventType.SWISS, 1)
             assert swiss.status == EventStatus.COMPLETED
 
+    async def test_preview_swaps_a_seed_then_seeds_that_field(self, db, monkeypatch):
+        from bot.config import Config
+        from bot.db import Player
+        from bot.services.tournament_flow import TournamentFlowService
+
+        monkeypatch.setattr("bot.services.pairing.prerender", AsyncMock())
+        await _swiss_with_results(db, completed=16)
+        await Config().set_season_state("SWISS")
+        flow = TournamentFlowService()
+
+        bad = await flow.preview_playoffs(1, ["S20"], ["S21"])
+        assert "not in the playoff seeds" in bad["error"]
+
+        preview = await flow.preview_playoffs(1, ["S00"], ["S20"])
+        async with db.get_session() as session:
+            ids = {
+                p.name: p.id
+                for p in (await session.execute(select(Player))).scalars()
+            }
+        assert preview["field"][0] == ids["S20"]
+        assert ids["S00"] not in preview["field"]
+        assert "swapped in" in preview["message"]
+
+        result = await flow.start_playoffs(1, preview["field"])
+        assert result["ok"] is True
+        async with db.get_session() as session:
+            playoff = await EventRepository(session).get_by_type_and_season(EventType.PLAYOFF, 1)
+            seeded = {
+                mp.player_id
+                for m in await MatchRepository(session).get_by_event(playoff.id)
+                for mp in m.match_players
+            }
+        assert ids["S20"] in seeded and ids["S00"] not in seeded
+
 
 async def _archived_open_match(db, completed: bool = False) -> int:
     """Season 1 archived with one Open match, season 2 active."""
@@ -2468,6 +2504,81 @@ async def test_swiss_rescore_clears_and_refills_descendants(db):
     assert filled_before["SW-R2-L1"] == [p2_id]
     assert filled_after["SW-R2-U1"] == [p2_id]
     assert filled_after["SW-R2-L1"] == [p1_id]
+
+
+async def _swiss_r1(db):
+    from bot.db.models import SeasonStatus
+    from bot.db import Player
+    from bot.services.pairing import PairingService
+
+    async with db.get_session() as session:
+        session.add(Season(number=1, status=SeasonStatus.ACTIVE))
+        await session.flush()
+        for i in range(32):
+            p = Player(discord_id=9300 + i, name=f"C{i}", country="US")
+            session.add(p)
+            await session.flush()
+            session.add(PlayerSeason(player_id=p.id, season_number=1, playin_rank=i + 1, hp=4))
+        await session.commit()
+    r1 = sorted(await PairingService().generate_swiss_round(1, 1), key=lambda m: m.bracket_slot)
+    by_slot = {m.bracket_slot: m for m in r1}
+    return by_slot["SW-R1-M1"], by_slot["SW-R1-M2"]
+
+
+async def _slot_sides(db, slot: str) -> list:
+    async with db.get_session() as session:
+        m = (await session.execute(
+            select(Match).options(selectinload(Match.match_players))
+            .where(Match.bracket_slot == slot)
+        )).scalars().one()
+        return [mp.player_id for mp in sorted(m.match_players, key=lambda mp: mp.side)]
+
+
+def _sides(match) -> list:
+    return [mp.player_id for mp in sorted(match.match_players, key=lambda mp: mp.side)]
+
+
+class TestSwissSides:
+    async def test_fewer_left_games_takes_left(self, db):
+        from bot.services.match import MatchService
+
+        m1, m2 = await _swiss_r1(db)
+        ms = MatchService()
+        await ms.report_score(m1.id, 1, 0, 0)  # left player wins M1
+        await ms.report_score(m2.id, 0, 1, 1)  # right player wins M2
+        # M2's winner had no left games, so they take the left side.
+        assert await _slot_sides(db, "SW-R2-U1") == [_sides(m2)[1], _sides(m1)[0]]
+        # Losers: M1 loser (right, 0 lefts) vs M2 loser (left, 1 left).
+        assert await _slot_sides(db, "SW-R2-L1") == [_sides(m1)[1], _sides(m2)[0]]
+
+    async def test_equal_lefts_higher_gd_takes_left(self, db):
+        from bot.services.match import MatchService
+
+        m1, m2 = await _swiss_r1(db)
+        ms = MatchService()
+        await ms.report_score(m1.id, 1, 0, 0)
+        await ms.report_score(m2.id, 5, 0, 0)
+        assert await _slot_sides(db, "SW-R2-U1") == [_sides(m2)[0], _sides(m1)[0]]
+
+    async def test_full_tie_keeps_default(self, db):
+        from bot.services.match import MatchService
+
+        m1, m2 = await _swiss_r1(db)
+        ms = MatchService()
+        await ms.report_score(m1.id, 2, 0, 0)
+        await ms.report_score(m2.id, 2, 0, 0)
+        assert await _slot_sides(db, "SW-R2-U1") == [_sides(m1)[0], _sides(m2)[0]]
+
+    async def test_rescore_after_swap_clears_the_right_player(self, db):
+        from bot.services.match import MatchService
+
+        m1, m2 = await _swiss_r1(db)
+        ms = MatchService()
+        await ms.report_score(m1.id, 1, 0, 0)
+        await ms.report_score(m2.id, 0, 1, 1)
+        await ms.report_score(m1.id, 0, 1, 1)  # flip M1: its right player wins
+        # Both now have 0 lefts and +1 GD: default order (M1 feeder left).
+        assert await _slot_sides(db, "SW-R2-U1") == [_sides(m1)[1], _sides(m2)[1]]
 
 
 async def _playoff_season(db, gf_wins: int, winner_side: int = 0, pending_reset: bool = False):

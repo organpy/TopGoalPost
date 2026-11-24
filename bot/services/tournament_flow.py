@@ -23,7 +23,7 @@ from bot.services.playin import (
     PlayinService, clear_redraw, compute_playin_math, generate_redraw, get_redraw,
     plan_redraw,
 )
-from bot.services.pairing import PairingService, SWISS_FIELD_SIZE
+from bot.services.pairing import PairingService, PLAYOFF_FIELD_SIZE, SWISS_FIELD_SIZE
 from bot.rendering import prerender
 from bot.rendering.StandingsMaker import _compute_playin_layout
 
@@ -812,14 +812,80 @@ class TournamentFlowService:
             ),
         }
 
-    async def start_playoffs(self, season: int) -> dict[str, Any]:
-        """Seed the playoff bracket from Swiss, then move SWISS → PLAYOFF."""
+    async def preview_playoffs(
+        self, season: int, remove: Sequence[str] = (), add: Sequence[str] = ()
+    ) -> dict[str, Any]:
+        """Show the 16 playoff seeds before seeding.
+
+        Each ``remove[i]`` (a seeded player) is replaced in their seed slot by
+        ``add[i]`` (any other Swiss player). Nothing is written; pass
+        ``field`` to :meth:`start_playoffs`.
+        """
+        if err := await self._require_state(("SWISS", "PLAYOFF")):
+            return err
+        state = await self.season_service.get_state()
+        if len(remove) != len(add):
+            return {"error": "Give one replacement for each removed player.", "state": state}
+        try:
+            ranked, stats = await self.pairing_service.playoff_ranking(season)
+        except ValueError as e:
+            return {"error": str(e), "state": state}
+
+        from bot.services.signup import find_player
+
+        field = ranked[:PLAYOFF_FIELD_SIZE]
+        errors: list[str] = []
+        async with self.db.get_session() as session:
+            _, all_ps = await self._swiss_pool(session, season)
+            names = {
+                ps.player_id: ps.player.name if ps.player else f"Player {ps.player_id}"
+                for ps in all_ps
+            }
+            withdrawn = {ps.player_id for ps in all_ps if ps.withdrawn}
+            for out_raw, in_raw in zip(remove, add):
+                out_p = await find_player(session, out_raw)
+                in_p = await find_player(session, in_raw)
+                if out_p is None or out_p.id not in field:
+                    errors.append(f"`{out_raw}`: not in the playoff seeds.")
+                elif in_p is None or in_p.id not in stats:
+                    errors.append(f"`{in_raw}`: not a Swiss player.")
+                elif in_p.id in withdrawn:
+                    errors.append(f"`{in_raw}`: **{in_p.name}** has withdrawn.")
+                elif in_p.id in field:
+                    errors.append(f"`{in_raw}`: **{in_p.name}** is already seeded.")
+                else:
+                    field[field.index(out_p.id)] = in_p.id
+        if errors:
+            return {"error": "\n".join(errors), "state": state}
+
+        rows = [
+            f"`{n:>2}` {names.get(pid, f'Player {pid}')} · "
+            f"{stats[pid]['wins']}-{stats[pid]['losses']}, {stats[pid]['gd']:+d} GD"
+            + ("" if pid in ranked[:PLAYOFF_FIELD_SIZE] else " · **swapped in**")
+            for n, pid in enumerate(field, start=1)
+        ]
+        return {
+            "ok": True,
+            "state": state,
+            "field": field,
+            "message": f"**Playoff seeds** ({len(remove)} swap(s))\n" + "\n".join(rows),
+        }
+
+    async def start_playoffs(
+        self, season: int, field: Optional[Sequence[int]] = None
+    ) -> dict[str, Any]:
+        """Seed the playoff bracket from Swiss (or a previewed ``field``),
+        then move SWISS → PLAYOFF."""
         if err := await self._require_state(("SWISS", "PLAYOFF")):
             return err
         try:
-            seeded = await self.pairing_service.generate_playoff_bracket(season)
+            seeded = await self.pairing_service.generate_playoff_bracket(
+                season, field=list(field) if field else None
+            )
         except ValueError as e:
             return {"error": str(e), "state": await self.season_service.get_state()}
+        if field:
+            await audit.record("stage.playoff_field", "season", season, field=list(field))
 
         advanced_from = await self._advance("PLAYOFF")
         return {

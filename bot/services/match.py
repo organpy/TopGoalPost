@@ -21,7 +21,9 @@ from bot.db import (
     PlayerSeasonRepository,
 )
 from bot.services import audit
-from bot.services.pairing import ADVANCEMENT_MAP
+from bot.services.pairing import ADVANCEMENT_MAP, SWISS_BRACKET
+
+SWISS_P1_SOURCE = {slot: p1_src for slot, _r, p1_src, *_ in SWISS_BRACKET}
 
 
 
@@ -296,6 +298,13 @@ class MatchService:
 
                 if (
                     dep_match.completed_at is None
+                    and (dep_match.bracket_slot or "").startswith("SW-")
+                    and all(mp.player_id for mp in dep_match.match_players)
+                ):
+                    await self._choose_swiss_sides(session, dep_match)
+
+                if (
+                    dep_match.completed_at is None
                     and dep_match.bracket_slot
                     and "-B" in dep_match.bracket_slot
                 ):
@@ -312,6 +321,53 @@ class MatchService:
 
         for bye_id in completed_byes:
             await self._propagate(bye_id, visited)
+
+    @staticmethod
+    async def _choose_swiss_sides(session, match: Match) -> None:
+        """Left side goes to whoever had fewer left-side Swiss games, then the
+        better Swiss goal difference; a full tie keeps the bracket default.
+
+        Players and their feeder links swap together, so side 0 always comes
+        from ``p1_prereq`` and rescoring still clears the right slot.
+        """
+        mps = sorted(match.match_players, key=lambda mp: mp.side)
+        ids = [mp.player_id for mp in mps]
+        earlier = (
+            await session.execute(
+                select(Match)
+                .options(selectinload(Match.match_players))
+                .where(
+                    Match.event_id == match.event_id,
+                    Match.series_game < (match.series_game or 1),
+                    Match.completed_at.is_not(None),
+                )
+            )
+        ).scalars().all()
+        lefts = {pid: 0 for pid in ids}
+        gd = {pid: 0 for pid in ids}
+        for m in earlier:
+            goals = {mp.player_id: (mp.side, mp.goals or 0) for mp in m.match_players}
+            total = sum(g for _, g in goals.values())
+            for pid in ids:
+                if pid in goals:
+                    side, own = goals[pid]
+                    lefts[pid] += side == 0
+                    gd[pid] += 2 * own - total
+        p1_slot = (
+            await session.execute(
+                select(Match.bracket_slot).where(Match.id == match.p1_prereq_id)
+            )
+        ).scalar()
+        # Bracket order, even if an earlier fill swapped this match.
+        default = ids if p1_slot == SWISS_P1_SOURCE.get(match.bracket_slot) else ids[::-1]
+        left = min(default, key=lambda pid: (lefts[pid], -gd[pid]))  # ties keep default
+        if left != ids[0]:
+            mps[0].player_id, mps[1].player_id = ids[1], ids[0]
+            match.p1_prereq_id, match.p2_prereq_id = match.p2_prereq_id, match.p1_prereq_id
+            match.p1_prereq_type, match.p2_prereq_type = (
+                match.p2_prereq_type,
+                match.p1_prereq_type,
+            )
 
     async def _clear_prereq_descendants(self, match_id: int) -> None:
         """Reset every match fed by ``match_id``, recursively.

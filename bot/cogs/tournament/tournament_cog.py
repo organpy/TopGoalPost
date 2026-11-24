@@ -570,6 +570,37 @@ class TournamentCog(commands.Cog):
         )
         await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
 
+    @tourney.command(name="preview_playoffs", description="Preview the playoff seeds, optionally swap players, then seed")
+    @app_commands.describe(
+        remove="Seeded players to take out (names/IDs, comma-separated)",
+        replace_with="Swiss players who take their seed, same order (names/IDs, comma-separated)",
+    )
+    @require_host_app()
+    async def slash_preview_playoffs(
+        self,
+        interaction: discord.Interaction,
+        remove: Optional[str] = None,
+        replace_with: Optional[str] = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        season = await self.season_service.get_current_season_number()
+        if not season:
+            await interaction.followup.send("No active season.", ephemeral=True)
+            return
+        outs = [p.strip() for p in (remove or "").split(",") if p.strip()]
+        ins = [p.strip() for p in (replace_with or "").split(",") if p.strip()]
+        preview = await self.flow_service.preview_playoffs(season, outs, ins)
+        if preview.get("error"):
+            await interaction.followup.send(preview["error"], ephemeral=True)
+            return
+        if not await confirm(interaction, f"{preview['message']}\n\nSeed playoffs with this field?"):
+            await interaction.followup.send("Cancelled; nothing changed.", ephemeral=True)
+            return
+        result = await self._run_stage(
+            interaction.guild, self.flow_service.start_playoffs, season, preview["field"]
+        )
+        await interaction.followup.send(result.get("error") or result["message"], ephemeral=True)
+
     @tourney.command(name="generate_playoffs", description="Seed / regenerate playoff bracket from Swiss results")
     @require_host_app()
     async def slash_generate_playoffs(self, interaction: discord.Interaction):

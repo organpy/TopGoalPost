@@ -68,6 +68,16 @@ Playin ranks after the real qualifiers. From OPEN it skips Playins (forced
 OPEN → SWISS, audited as `stage.swiss_fill`). Withdrawn players never enter
 Swiss.
 
+Swiss sides: R1 is seeded (1 vs 32, …). From R2 on, when a match gets both
+players the left side goes to whoever had fewer left-side Swiss games, then
+the higher Swiss GD; a full tie keeps the bracket order
+(`MatchService._choose_swiss_sides`). Players and feeder links swap together.
+
+`/tourney preview_playoffs [remove] [replace_with]` shows the 16 playoff seeds,
+swaps each removed seed for the matching Swiss player in the same seed slot,
+and seeds on confirm (`preview_playoffs` → `start_playoffs(field)`, audited as
+`stage.playoff_field`).
+
 Short Playins: `start_playins` projects the regular ladder (withdrawn players
 counted out) and, if it cannot reach 32, creates nothing and returns `short`
 numbers plus a redraw preview; slash/dashboard then offer **Regular anyway**

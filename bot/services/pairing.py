@@ -716,10 +716,12 @@ class PairingService:
                     pools[m.id] = mps
         return pools 
 
-    async def generate_playoff_bracket(self, season: int, force: bool = False) -> list[int]:
-        """Select the top 16 by Swiss record and seed the playoff bracket.
+    async def playoff_ranking(
+        self, season: int, force: bool = False
+    ) -> tuple[list[int], dict[int, dict[str, int]]]:
+        """Swiss players best-first, plus their Swiss W/L/GD.
 
-        Refuses to seed until every Swiss match is complete and, for the fixed
+        Refuses until every Swiss match is complete and, for the fixed
         ladder, exactly 16 players reached 3 wins. ``force`` skips both checks
         for emergency repairs.
         """
@@ -786,8 +788,6 @@ class PairingService:
                     pid,
                 ),
             )
-            top_16 = ranked[:PLAYOFF_FIELD_SIZE]
-
             if len(matches) == len(SWISS_BRACKET) and not force:
                 qualified = sum(
                     1 for pid in stats if stats[pid]["wins"] >= SWISS_WINS_TO_QUALIFY
@@ -797,7 +797,27 @@ class PairingService:
                         f"Expected {PLAYOFF_FIELD_SIZE} Swiss qualifiers with "
                         f"{SWISS_WINS_TO_QUALIFY} wins; found {qualified}."
                     )
+        return ranked, stats
 
+    async def generate_playoff_bracket(
+        self, season: int, force: bool = False, field: Optional[list[int]] = None
+    ) -> list[int]:
+        """Seed the playoff bracket from the Swiss top 16, or from ``field``
+        (16 Swiss players in seed order, e.g. a host-edited preview)."""
+        ranked, stats = await self.playoff_ranking(season, force)
+        top_16 = list(field) if field else ranked[:PLAYOFF_FIELD_SIZE]
+        if field and (
+            len(set(top_16)) != PLAYOFF_FIELD_SIZE
+            or any(pid not in stats for pid in top_16)
+        ):
+            raise ValueError(
+                f"The playoff field must be {PLAYOFF_FIELD_SIZE} different Swiss players."
+            )
+
+        async with self.db.get_session() as session:
+            swiss_event = await EventRepository(session).get_by_type_and_season(
+                EventType.SWISS, season
+            )
             swiss_event.status = EventStatus.COMPLETED
             await session.commit()
 
