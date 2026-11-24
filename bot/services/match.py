@@ -21,9 +21,13 @@ from bot.db import (
     PlayerSeasonRepository,
 )
 from bot.services import audit
-from bot.services.pairing import ADVANCEMENT_MAP, SWISS_BRACKET
+from bot.services.pairing import ADVANCEMENT_MAP
 
-SWISS_P1_SOURCE = {slot: p1_src for slot, _r, p1_src, *_ in SWISS_BRACKET}
+
+def _swiss_slot_order(slot: str) -> tuple:
+    """Bracket order of a Swiss feeder: 'SW-R3-M4' -> (3, 1, 4); U < M < L."""
+    _, rnd, pos = slot.split("-")
+    return int(rnd[1:]), "UML".index(pos[0]), int(pos[1:])
 
 
 
@@ -353,13 +357,20 @@ class MatchService:
                     side, own = goals[pid]
                     lefts[pid] += side == 0
                     gd[pid] += 2 * own - total
-        p1_slot = (
-            await session.execute(
-                select(Match.bracket_slot).where(Match.id == match.p1_prereq_id)
-            )
-        ).scalar()
-        # Bracket order, even if an earlier fill swapped this match.
-        default = ids if p1_slot == SWISS_P1_SOURCE.get(match.bracket_slot) else ids[::-1]
+        slots = dict(
+            (
+                await session.execute(
+                    select(Match.id, Match.bracket_slot).where(
+                        Match.id.in_([match.p1_prereq_id, match.p2_prereq_id])
+                    )
+                )
+            ).all()
+        )
+        # Bracket order (stored per season), even if an earlier fill swapped it.
+        in_order = _swiss_slot_order(slots[match.p1_prereq_id]) < _swiss_slot_order(
+            slots[match.p2_prereq_id]
+        )
+        default = ids if in_order else ids[::-1]
         left = min(default, key=lambda pid: (lefts[pid], -gd[pid]))  # ties keep default
         if left != ids[0]:
             mps[0].player_id, mps[1].player_id = ids[1], ids[0]

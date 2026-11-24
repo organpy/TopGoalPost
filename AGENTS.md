@@ -72,6 +72,10 @@ Swiss sides: R1 is seeded (1 vs 32, …). From R2 on, when a match gets both
 players the left side goes to whoever had fewer left-side Swiss games, then
 the higher Swiss GD; a full tie keeps the bracket order
 (`MatchService._choose_swiss_sides`). Players and feeder links swap together.
+The fixed `SWISS_BRACKET` feeds every match from disjoint R1 groups, so no
+rematch is possible (test `test_swiss_bracket_never_repeats_an_opponent`).
+Each season's graph is stored when Swiss is created, so bracket edits only
+affect new Swiss brackets.
 
 `/tourney preview_playoffs [remove] [replace_with]` shows the 16 playoff seeds,
 swaps each removed seed for the matching Swiss player in the same seed slot,

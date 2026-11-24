@@ -2538,6 +2538,27 @@ def _sides(match) -> list:
     return [mp.player_id for mp in sorted(match.match_players, key=lambda mp: mp.side)]
 
 
+def test_swiss_bracket_never_repeats_an_opponent():
+    """Both sides of every Swiss match descend from disjoint R1 matches, so
+    no two players can meet twice whatever the results."""
+    from collections import Counter
+    from bot.services.pairing import SWISS_BRACKET
+
+    r1_set: dict[str, set[str]] = {}
+    used = Counter()
+    for slot, _rnd, p1, p1_type, p2, p2_type in SWISS_BRACKET:
+        if p1 is None:
+            r1_set[slot] = {slot}
+            continue
+        assert not r1_set[p1] & r1_set[p2], slot
+        r1_set[slot] = r1_set[p1] | r1_set[p2]
+        used[(p1, p1_type)] += 1
+        used[(p2, p2_type)] += 1
+    assert max(used.values()) == 1
+    # Every non-final result feeds exactly one slot: 3-win/3-loss exits only.
+    assert len(used) == 2 * 16 + 2 * 16 + 2 * 16 - 4 - 4 + 2 * 12 - 6 - 6
+
+
 class TestSwissSides:
     async def test_fewer_left_games_takes_left(self, db):
         from bot.services.match import MatchService

@@ -109,59 +109,41 @@ def _build_swiss_bracket() -> list[
             (f"SW-R2-L{i}", 2, f"SW-R1-M{a}", "loser", f"SW-R1-M{b}", "loser")
         )
 
-    # Round 3 — 2-0 (U), 1-1 (M: R2U losers vs R2L winners), 0-2 (L).
+    # Round 3 — 2-0 (U) and 0-2 (L) pair neighbouring R2 matches. 1-1 (M)
+    # crosses pairs (R2 U1 loser vs R2 L2 winner) so R1 opponents never meet.
     for i in range(1, 5):
-        bracket.append(
-            (
-                f"SW-R3-U{i}",
-                3,
-                f"SW-R2-U{2 * i - 1}",
-                "winner",
-                f"SW-R2-U{2 * i}",
-                "winner",
-            )
-        )
-        bracket.append(
-            (
-                f"SW-R3-L{i}",
-                3,
-                f"SW-R2-L{2 * i - 1}",
-                "loser",
-                f"SW-R2-L{2 * i}",
-                "loser",
-            )
-        )
+        bracket.append((f"SW-R3-U{i}", 3, f"SW-R2-U{2 * i - 1}", "winner", f"SW-R2-U{2 * i}", "winner"))
+        bracket.append((f"SW-R3-L{i}", 3, f"SW-R2-L{2 * i - 1}", "loser", f"SW-R2-L{2 * i}", "loser"))
     for i in range(1, 9):
-        bracket.append(
-            (f"SW-R3-M{i}", 3, f"SW-R2-U{i}", "loser", f"SW-R2-L{i}", "winner")
-        )
+        partner = i + 1 if i % 2 else i - 1
+        bracket.append((f"SW-R3-M{i}", 3, f"SW-R2-U{i}", "loser", f"SW-R2-L{partner}", "winner"))
 
-    # Round 4 — 2-1 (U: R3U losers + R3M winners), 1-2 (L: R3M losers + R3L winners).
-    for i in range(1, 5):
-        bracket.append(
-            (f"SW-R4-U{i}", 4, f"SW-R3-U{i}", "loser", f"SW-R3-M{i}", "winner")
-        )
-        bracket.append(
-            (f"SW-R4-L{i}", 4, f"SW-R3-M{i}", "loser", f"SW-R3-L{i}", "winner")
-        )
-    bracket.append(
-        ("SW-R4-U5", 4, "SW-R3-M5", "winner", "SW-R3-M6", "winner")
-    )
-    bracket.append(
-        ("SW-R4-U6", 4, "SW-R3-M7", "winner", "SW-R3-M8", "winner")
-    )
-    bracket.append(
-        ("SW-R4-L5", 4, "SW-R3-M5", "loser", "SW-R3-M6", "loser")
-    )
-    bracket.append(
-        ("SW-R4-L6", 4, "SW-R3-M7", "loser", "SW-R3-M8", "loser")
-    )
-
-    # Round 5 — 2-2 deciders: R4U losers vs R4L winners.
-    for i in range(1, 7):
-        bracket.append(
-            (f"SW-R5-M{i}", 5, f"SW-R4-U{i}", "loser", f"SW-R4-L{i}", "winner")
-        )
+    # Round 4 and 5 feeders, chosen so the two sides of every match come
+    # from disjoint groups of R1 matches: nobody can face the same opponent
+    # twice. p1 is always the earlier bucket (U < M < L), then lower number.
+    feeders = {
+        "SW-R4-U1": ("SW-R3-U1", "loser", "SW-R3-M3", "winner"),
+        "SW-R4-U2": ("SW-R3-U2", "loser", "SW-R3-M1", "winner"),
+        "SW-R4-U3": ("SW-R3-U3", "loser", "SW-R3-M7", "winner"),
+        "SW-R4-U4": ("SW-R3-U4", "loser", "SW-R3-M5", "winner"),
+        "SW-R4-U5": ("SW-R3-M2", "winner", "SW-R3-M6", "winner"),
+        "SW-R4-U6": ("SW-R3-M4", "winner", "SW-R3-M8", "winner"),
+        "SW-R4-L1": ("SW-R3-M4", "loser", "SW-R3-L1", "winner"),
+        "SW-R4-L2": ("SW-R3-M2", "loser", "SW-R3-L2", "winner"),
+        "SW-R4-L3": ("SW-R3-M8", "loser", "SW-R3-L3", "winner"),
+        "SW-R4-L4": ("SW-R3-M6", "loser", "SW-R3-L4", "winner"),
+        "SW-R4-L5": ("SW-R3-M1", "loser", "SW-R3-M5", "loser"),
+        "SW-R4-L6": ("SW-R3-M3", "loser", "SW-R3-M7", "loser"),
+        # Round 5 — 2-2 deciders: R4 U losers vs R4 L winners.
+        "SW-R5-M1": ("SW-R4-U1", "loser", "SW-R4-L3", "winner"),
+        "SW-R5-M2": ("SW-R4-U2", "loser", "SW-R4-L4", "winner"),
+        "SW-R5-M3": ("SW-R4-U3", "loser", "SW-R4-L1", "winner"),
+        "SW-R5-M4": ("SW-R4-U4", "loser", "SW-R4-L2", "winner"),
+        "SW-R5-M5": ("SW-R4-U5", "loser", "SW-R4-L6", "winner"),
+        "SW-R5-M6": ("SW-R4-U6", "loser", "SW-R4-L5", "winner"),
+    }
+    for slot, (p1, p1_type, p2, p2_type) in feeders.items():
+        bracket.append((slot, int(slot[4]), p1, p1_type, p2, p2_type))
 
     return bracket
 
